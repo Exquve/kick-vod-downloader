@@ -113,11 +113,7 @@ python scripts/exit_check.py python run.py --no-tray   # çıkış sonrası sür
 
 ### Sürüm yayınlama
 
-`kickindirici/__init__.py` içindeki sürümü artırın, sonra:
-
-```bash
-git tag v1.0.1 && git push origin v1.0.1
-```
-
-GitHub Actions exe'yi derler, testleri ve süreç kontrolünü çalıştırır, sonra exe'yi Release'e ekler.
+`kickindirici/__init__.py` içindeki sürümü artırıp `main`'e push etmeniz yeterli. GitHub Actions
+exe'yi derler, testleri ve süreç kontrolünü çalıştırır; o sürümün etiketi (`v1.0.1` gibi) henüz yoksa
+etiketi oluşturup exe'yi Release'e ekler. Elle `v*` etiketi push etmek de aynı işi yapar.
 Her push'ta exe ayrıca artifact olarak yüklenir.
