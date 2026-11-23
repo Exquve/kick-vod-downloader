@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e0f11">
+<title>Kick VOD İndirici</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/icon.png">
+<link rel="apple-touch-icon" href="/static/icon.png">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Kick <span>VOD</span> İndirici</h1>
+    <nav>{% if local %}<a href="/baglan">Telefondan aç</a>{% endif %}</nav>
+  </header>
+
+  <form class="card" id="addForm" autocomplete="off">
+    <label for="url">Kick VOD linki</label>
+    <div class="row">
+      <input type="url" id="url" name="url" placeholder="https://kick.com/kanal/videos/..." required inputmode="url">
+      <button type="button" id="pasteBtn" title="Panodan yapıştır">Yapıştır</button>
+    </div>
+    <label style="margin-top:14px">Parça süresi</label>
+    <div class="pills">
+      {% for c in chunks %}
+      <input type="radio" name="chunk" id="c{{c}}" value="{{c}}" {% if c == default_chunk %}checked{% endif %}>
+      <label for="c{{c}}">{{ 'Bölme yok' if c == 0 else c ~ ' dk' }}</label>
+      {% endfor %}
+    </div>
+    <button class="primary full" type="submit">İndir</button>
+    <div class="msg" id="addMsg"></div>
+  </form>
+
+  <div id="notice"></div>
+  <section id="jobs"></section>
+
+  <details class="card" id="settings">
+    <summary>⚙️ Ayarlar</summary>
+    <div class="field">
+      <label for="dir">İndirme klasörü (PC'de)</label>
+      <input type="text" id="dir">
+      {% if local %}<button type="button" id="openDir" style="margin-top:8px">Klasörü aç</button>{% endif %}
+    </div>
+    <div class="field">
+      <label for="cookies">Abonelere özel VOD'lar için tarayıcı çerezi</label>
+      <select id="cookies">
+        <option value="">Kapalı</option>
+        <option value="firefox">Firefox</option>
+        <option value="chrome">Chrome</option>
+        <option value="edge">Edge</option>
+      </select>
+      <div class="hint">PC'de bu tarayıcıda Kick hesabınız açık olmalı. Chrome/Edge açıkken çerezleri okumak bazen mümkün olmaz; en sorunsuzu Firefox'tur.</div>
+    </div>
+    <div class="field">
+      <label for="defChunk">Varsayılan parça süresi</label>
+      <select id="defChunk">
+        {% for c in chunks %}<option value="{{c}}">{{ 'Bölme yok' if c == 0 else c ~ ' dk' }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="remote"> Farklı ağlardan erişim (internet üzerinden)</label>
+      <div class="hint">Açıkken Cloudflare üzerinden geçici, şifreli bir adres oluşturulur; modem ayarı gerekmez. Adres "Telefondan aç" sayfasında QR olarak görünür ve uygulama her açıldığında değişir. Linki bilen herkes erişemez; gizli erişim anahtarı gerekir.</div>
+    </div>
+    <button class="primary full" id="saveSettings" type="button">Kaydet</button>
+    <div class="msg" id="setMsg"></div>
+  </details>
+
+  <p class="center ver">v{{version}}</p>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

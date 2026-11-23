@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Telefondan bağlan · Kick VOD İndirici</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/icon.png">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Kick <span>VOD</span> İndirici</h1>
+    <nav><a href="/">Arayüze git →</a></nav>
+  </header>
+
+  <div class="card center">
+    <p style="margin-top:0">Telefonun <b>aynı Wi-Fi</b>'a bağlıyken kamerayla bu kodu okutun:</p>
+    <img class="qr" src="/qr.svg?d={{ info.lan_link|urlencode }}" alt="QR kod">
+    <div class="big-url">{{ info.lan_url }}</div>
+    <p class="hint">QR kod gizli erişim anahtarını içerir; adresi elle yazarsanız ilk seferde bu sayfadaki QR'ı okutmanız gerekir.</p>
+  </div>
+
+  {% if info.public_network %}
+  <div class="card warn">
+    <b>Bu Wi-Fi "Ortak (Public) ağ" olarak ayarlı.</b> Telefon bağlanamayabilir. Düzeltmek için:
+    <ol>
+      <li>Ayarlar → Ağ ve İnternet → Wi-Fi (veya Ethernet) → bağlı olduğunuz ağ</li>
+      <li>"Ağ profili türü" kısmında <b>Özel ağ</b>'ı seçin.</li>
+    </ol>
+  </div>
+  {% endif %}
+
+  {% if not info.firewall_ok %}
+  <div class="card warn">
+    <b>Güvenlik duvarı izni yok.</b> Telefon bağlanamıyorsa elle izin verin:
+    <ol>
+      <li>Başlat'a <b>"Windows Güvenlik Duvarı'ndan uygulamaya izin ver"</b> yazıp açın.</li>
+      <li><b>Ayarları değiştir</b>'e tıklayın.</li>
+      <li><b>Başka bir uygulamaya izin ver…</b> → <b>Gözat</b> → KickIndirici.exe'yi seçip <b>Ekle</b>.</li>
+      <li>Listede KickIndirici satırında yalnızca <b>Özel</b> kutusunu işaretleyip <b>Tamam</b>'a basın.</li>
+    </ol>
+    <p class="hint">Listede KickIndirici için kırmızı "engelle" kuralı varsa onu kaldırın (önceki bir uyarıda "İptal" dendiyse oluşur).</p>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <b>Farklı ağlardan (mobil veri vb.) erişim</b>
+    {% if info.tunnel_link %}
+      <p>Bu kodu okutun (adres uygulama her açıldığında değişir):</p>
+      <img class="qr" src="/qr.svg?d={{ info.tunnel_link|urlencode }}" alt="Uzak QR kod">
+    {% elif info.remote_enabled %}
+      <p>Tünel durumu: <b>{{ info.tunnel_status }}</b> — birkaç saniye sonra sayfayı yenileyin.</p>
+    {% else %}
+      <p class="hint">Kapalı. Açmak için Arayüz → Ayarlar → "Farklı ağlardan erişim".</p>
+    {% endif %}
+    {% if info.tailscale_link %}
+      <p>Tailscale adresi (sabit):</p>
+      <img class="qr" src="/qr.svg?d={{ info.tailscale_link|urlencode }}" alt="Tailscale QR">
+    {% endif %}
+  </div>
+
+  {% if local %}
+  <div class="card">
+    <button type="button" onclick="if(confirm('Eski QR kodları/linkler geçersiz olacak. Devam?'))fetch('/api/reset-token',{method:'POST'}).then(()=>location.reload())">Erişim anahtarını yenile</button>
+  </div>
+  {% endif %}
+  <p class="center ver">v{{version}}</p>
+</main>
+</body>
+</html>
