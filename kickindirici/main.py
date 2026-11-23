@@ -13,7 +13,7 @@ import webbrowser
 
 from . import __version__, jobs, procs, tunnel as tunnelmod, winutil, ytdlp
 from .config import Config
-from .paths import IS_WINDOWS, appdata_dir, is_frozen, package_dir
+from .paths import appdata_dir, is_frozen, package_dir
 from .web import AppState, create_app
 
 log = logging.getLogger("kickindirici")
@@ -87,14 +87,14 @@ def main(argv: list[str] | None = None) -> int:
     ytdlp.start_background_prepare()
     winutil.ensure_firewall(cfg)
 
+    prober = jobs.Prober(lambda: cfg["cookies_browser"])
     manager = jobs.JobManager(appdata_dir() / "jobs.json", cfg.download_dir,
-                              jobs.default_processor(lambda: cfg["cookies_browser"]))
+                              jobs.default_processor(lambda: cfg["cookies_browser"], prober))
     manager.start()
     tun = tunnelmod.Tunnel()
     port = find_port(args.port or cfg["port"])
 
     stopping = threading.Event()
-    tray_stop = threading.Event()
 
     def shutdown() -> None:
         if stopping.is_set():
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             logging.shutdown()
             os._exit(0)
 
-    state = AppState(cfg, manager, tun, port, on_quit=shutdown)
+    state = AppState(cfg, manager, tun, port, on_quit=shutdown, prober=prober)
     app = create_app(state)
 
     from waitress import create_server

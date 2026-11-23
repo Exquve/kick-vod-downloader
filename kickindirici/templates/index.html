@@ -16,22 +16,49 @@
     <nav>{% if local %}<a href="/baglan">Telefondan aç</a>{% endif %}</nav>
   </header>
 
-  <form class="card" id="addForm" autocomplete="off">
+  <div class="card" id="addCard">
     <label for="url">Kick VOD linki</label>
     <div class="row">
-      <input type="url" id="url" name="url" placeholder="https://kick.com/kanal/videos/..." required inputmode="url">
+      <input type="url" id="url" placeholder="https://kick.com/kanal/videos/..." inputmode="url" autocomplete="off">
       <button type="button" id="pasteBtn" title="Panodan yapıştır">Yapıştır</button>
     </div>
-    <label style="margin-top:14px">Parça süresi</label>
-    <div class="pills">
-      {% for c in chunks %}
-      <input type="radio" name="chunk" id="c{{c}}" value="{{c}}" {% if c == default_chunk %}checked{% endif %}>
-      <label for="c{{c}}">{{ 'Bölme yok' if c == 0 else c ~ ' dk' }}</label>
-      {% endfor %}
+    <div class="msg" id="probeMsg"></div>
+
+    <div id="pick" hidden>
+      <div class="vinfo">
+        <img id="thumb" alt="" hidden>
+        <div><div class="title" id="vtitle"></div><div class="hint" id="vmeta"></div></div>
+      </div>
+
+      <label>İndirilecek aralık</label>
+      <div class="dual" id="dual">
+        <div class="track"><i id="sel"></i></div>
+        <input type="range" id="rStart" min="0" max="100" step="1" value="0" aria-label="Başlangıç">
+        <input type="range" id="rEnd" min="0" max="100" step="1" value="100" aria-label="Bitiş">
+      </div>
+      <div class="row times">
+        <div><label for="tStart">Başlangıç</label><input type="text" id="tStart" inputmode="numeric" placeholder="0:00:00"></div>
+        <div><label for="tEnd">Bitiş</label><input type="text" id="tEnd" inputmode="numeric"></div>
+      </div>
+      <div class="pills quick">
+        <button type="button" data-q="all">Tümü</button>
+        <button type="button" data-q="first">İlk 1 saat</button>
+        <button type="button" data-q="last">Son 1 saat</button>
+      </div>
+
+      <label>Parça süresi</label>
+      <div class="pills">
+        {% for c in chunks %}
+        <input type="radio" name="chunk" id="c{{c}}" value="{{c}}" {% if c == default_chunk %}checked{% endif %}>
+        <label for="c{{c}}">{{ 'Bölme yok' if c == 0 else c ~ ' dk' }}</label>
+        {% endfor %}
+      </div>
+      <div class="plan" id="planInfo"></div>
+      <button class="primary full" type="button" id="startBtn">İndirmeyi başlat</button>
+      <p class="hint center">Parçalar sırayla iner; her parça biter bitmez indirme linki burada çıkar.</p>
     </div>
-    <button class="primary full" type="submit">İndir</button>
     <div class="msg" id="addMsg"></div>
-  </form>
+  </div>
 
   <div id="notice"></div>
   <section id="jobs"></section>

@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import pytest
 
@@ -20,9 +21,16 @@ def env(tmp_path):
         (d / "Yayın - Parça 01.mp4").write_bytes(DATA)
         ctx.update(dir=str(d), title="Yayın", files=jobs.list_files(d))
 
+    class FakeProber:
+        def get(self, url):
+            if "bozuk" in url:
+                raise RuntimeError("Video bulunamadı")
+            return {"title": "Yayın", "duration": 7300.0, "thumbnail": "https://img/x.jpg",
+                    "uploader": "kanal", "url": "https://cdn/x.m3u8"}
+
     m = jobs.JobManager(tmp_path / "jobs.json", cfg.download_dir, proc)
     m.start()
-    app = create_app(AppState(cfg, m, None, 8765))
+    app = create_app(AppState(cfg, m, None, 8765, prober=FakeProber()))
     app.testing = True
     yield app, cfg, m
     m.stop()
@@ -184,3 +192,43 @@ def test_connect_page(env):
     r = app.test_client().get("/baglan")
     assert r.status_code == 200
     assert ":8765" in r.get_data(as_text=True)
+
+
+def test_probe(env, monkeypatch):
+    from kickindirici import ytdlp
+    app, *_ = env
+    monkeypatch.setattr(ytdlp, "wait_ready", lambda t=None: True)
+    monkeypatch.setattr(ytdlp, "ytdlp_path", lambda: Path(__file__))
+    c = app.test_client()
+    r = c.post("/api/probe", json={"url": "https://kick.com/k/videos/1"})
+    assert r.status_code == 200
+    assert r.json == {"title": "Yayın", "duration": 7300.0, "thumbnail": "https://img/x.jpg", "uploader": "kanal"}
+    r = c.post("/api/probe", json={"url": "https://kick.com/bozuk"})
+    assert r.status_code == 422 and "bulunamadı" in r.json["error"]
+    assert c.post("/api/probe", json={"url": "selam"}).status_code == 400
+
+
+def test_add_job_with_range(env):
+    app, _, m = env
+    c = app.test_client()
+    r = c.post("/api/jobs", json={"url": "https://kick.com/x", "chunk": 60, "start": 600, "end": 4200, "title": "Yayın"})
+    assert r.status_code == 201
+    j = m.get(r.json["job"]["id"])
+    assert (j.start, j.end, j.chunk) == (600, 4200, 60)
+    assert c.post("/api/jobs", json={"url": "https://kick.com/x", "chunk": 60, "start": 600, "end": 600}).status_code == 400
+    assert c.post("/api/jobs", json={"url": "https://kick.com/x", "chunk": 60, "start": "abc"}).status_code == 400
+
+
+def test_done_parts_get_links(env):
+    app, _, m = env
+    c = app.test_client()
+    j = add_and_wait(c)
+    with m._lock:
+        m._jobs[j["id"]].parts = [{"index": 1, "start": 0, "end": 10, "status": "done",
+                                   "name": "Yayın - Parça 01.mp4", "size": 1},
+                                  {"index": 2, "start": 10, "end": 20, "status": "queued",
+                                   "name": "Yayın - Parça 02.mp4", "size": None}]
+    s = c.get("/api/state").json
+    parts = next(x for x in s["jobs"] if x["id"] == j["id"])["parts"]
+    assert parts[0]["download"].endswith("?dl=1") and parts[0]["infuse"].startswith("infuse://")
+    assert "download" not in parts[1]

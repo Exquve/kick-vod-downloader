@@ -19,6 +19,21 @@ function fmtTime(s) {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
   return h ? `${h} sa ${m} dk` : m ? `${m} dk ${x} sn` : `${x} sn`;
 }
+function hms(s) {
+  s = Math.max(0, Math.round(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}`;
+}
+// "1:23:45", "83:00" (dk:sn) ya da "90" (dakika) -> saniye
+function parseTime(t) {
+  t = String(t || "").trim().replace(/[.,]/g, ":");
+  if (!t) return null;
+  if (!/^\d+(:\d{1,2}){0,2}$/.test(t)) return NaN;
+  const p = t.split(":").map(Number);
+  if (p.length === 1) return p[0] * 60;
+  if (p.length === 2) return p[0] * 60 + p[1];
+  return p[0] * 3600 + p[1] * 60 + p[2];
+}
 function esc(t) {
   return String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -30,35 +45,54 @@ async function api(path, opts = {}) {
   return data;
 }
 
+function fileActs(f) {
+  return `<div class="acts"><a class="btn primary" href="${esc(f.download)}" download>İndir</a>
+    <a class="btn" href="${esc(f.infuse)}">Infuse</a></div>`;
+}
+function partHtml(p, n) {
+  const label = n > 1 ? `Parça ${String(p.index).padStart(2, "0")}` : "Video";
+  const rng = p.end != null ? `${hms(p.start)} – ${hms(p.end)}` : "";
+  let st = { queued: "Sırada", downloading: `İniyor %${(p.percent || 0).toFixed(0)}`, done: "Hazır" }[p.status] || p.status;
+  if (p.status === "done" && p.size) st = "Hazır · " + fmtBytes(p.size);
+  let h = `<div class="part"><div class="ph"><div><span class="pn">${label}</span> <span class="pt">${rng}</span></div>
+    <span class="ps ${p.status}">${esc(st)}</span></div>`;
+  if (p.status === "downloading") h += `<div class="mini"><i style="width:${p.percent || 0}%"></i></div>`;
+  if (p.status === "done" && p.download) h += fileActs(p);
+  return h + `</div>`;
+}
 function jobHtml(j) {
   const st = STATUS[j.status] || j.status;
   const pct = Math.max(0, Math.min(100, j.percent || 0));
+  const running = ACTIVE.has(j.status);
+  const parts = j.parts || [];
   let html = `<div class="card job" data-id="${j.id}">
-    <div class="top"><div><div class="title">${esc(j.title || (ACTIVE.has(j.status) || j.status === "queued" ? "Bilgi alınıyor…" : "Başlıksız video"))}</div>
+    <div class="top"><div><div class="title">${esc(j.title || (running || j.status === "queued" ? "Bilgi alınıyor…" : "Başlıksız video"))}</div>
     <div class="url">${esc(j.url)}</div></div>
     <span class="badge ${j.status}">${st}</span></div>`;
-  if (ACTIVE.has(j.status) || j.status === "queued") {
-    const stats = [];
-    if (j.status !== "queued") stats.push(`%${pct.toFixed(1)}`);
+  const stats = [];
+  if (j.end != null || j.start) stats.push(`Aralık: ${hms(j.start)} – ${j.end != null ? hms(j.end) : "son"}`);
+  if (running || j.status === "queued") {
+    if (j.status !== "queued") stats.unshift(`%${pct.toFixed(1)}`);
+    if (j.part_index && parts.length > 1) stats.push(`Parça ${j.part_index}/${parts.length}`);
     if (j.status === "downloading") {
       if (j.speed) stats.push(fmtBytes(j.speed) + "/sn");
       if (j.eta != null) stats.push("Kalan: " + fmtTime(j.eta));
-      if (j.total) stats.push(fmtBytes(j.downloaded) + " / " + fmtBytes(j.total));
     }
-    if (j.chunk) stats.push(j.chunk + " dk parçalar"); else stats.push("Bölme yok");
-    html += (j.status === "queued" ? `<div class="stats" style="margin-top:10px">` : `<div class="bar"><i style="width:${pct}%"></i></div><div class="stats">`) + `${stats.map((s) => `<span>${esc(s)}</span>`).join("")}</div>`;
+    stats.push(j.chunk ? j.chunk + " dk parçalar" : "Bölme yok");
+    if (j.status !== "queued") html += `<div class="bar"><i style="width:${pct}%"></i></div>`;
   }
+  if (stats.length) html += `<div class="stats" ${j.status === "queued" || !running ? 'style="margin-top:8px"' : ""}>${stats.map((s) => `<span>${esc(s)}</span>`).join("")}</div>`;
   if (j.error) html += `<div class="err-text">${esc(j.error)}</div>`;
-  if (j.files && j.files.length) {
+  if (parts.length) {
+    html += `<div class="parts">` + parts.map((p) => partHtml(p, parts.length)).join("") + `</div>`;
+  } else if (j.files && j.files.length) {
     html += `<div class="files">` + j.files.map((f) => `<div class="file">
-      <div class="name">${esc(f.name)}</div><div class="size">${fmtBytes(f.size)}</div>
-      <div class="acts"><a class="btn primary" href="${esc(f.download)}" download>İndir</a>
-      <a class="btn" href="${esc(f.infuse)}">Infuse</a></div></div>`).join("") + `</div>`;
+      <div class="name">${esc(f.name)}</div><div class="size">${fmtBytes(f.size)}</div>${fileActs(f)}</div>`).join("") + `</div>`;
   }
   html += `<div class="job-acts">`;
-  if (ACTIVE.has(j.status) || j.status === "queued") html += `<button data-act="cancel" class="danger">İptal</button>`;
-  if (j.status === "error" || j.status === "canceled") html += `<button data-act="retry">Tekrar dene</button>`;
-  if (!ACTIVE.has(j.status)) html += `<button data-act="delete" class="danger">Sil</button>`;
+  if (running || j.status === "queued") html += `<button data-act="cancel" class="danger">İptal</button>`;
+  if (j.status === "error" || j.status === "canceled") html += `<button data-act="retry">${parts.some((p) => p.status === "done") ? "Kaldığı yerden devam" : "Tekrar dene"}</button>`;
+  if (!running) html += `<button data-act="delete" class="danger">Sil</button>`;
   html += `</div></div>`;
   return html;
 }
@@ -93,22 +127,132 @@ $("#jobs").addEventListener("click", async (ev) => {
   lastJson = ""; refresh();
 });
 
-$("#addForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const msg = $("#addMsg");
-  msg.className = "msg"; msg.textContent = "Ekleniyor…";
-  const chunk = document.querySelector("input[name=chunk]:checked").value;
+// ---------- link -> önizleme -> aralık seçimi ----------
+let video = null;      // {title, duration, thumbnail, uploader, url}
+let probeSeq = 0;
+const MIN_TAIL = 60;
+
+function chunkMin() { return +document.querySelector("input[name=chunk]:checked").value; }
+
+function planBounds(a, b, chunkSec) {
+  const len = b - a;
+  if (!chunkSec || len < chunkSec + MIN_TAIL) return [a, b];
+  const cuts = [];
+  for (let t = chunkSec; t < len; t += chunkSec) cuts.push(t);
+  while (cuts.length && len - cuts[cuts.length - 1] < MIN_TAIL) cuts.pop();
+  return [a, ...cuts.map((c) => a + c), b];
+}
+
+function getRange() {
+  const s = parseTime($("#tStart").value), e = parseTime($("#tEnd").value);
+  return { s: s == null ? 0 : s, e: e == null ? (video && video.duration) || null : e };
+}
+
+function updatePlan() {
+  const out = $("#planInfo");
+  if (!video) return;
+  const { s, e } = getRange();
+  const dur = video.duration;
+  if (Number.isNaN(s) || Number.isNaN(e)) { out.innerHTML = `<span class="err-text">Süreyi 1:23:45 biçiminde yazın.</span>`; return; }
+  if (dur && (e > dur + 1 || s >= e)) { out.innerHTML = `<span class="err-text">Aralık geçersiz (video ${hms(dur)}).</span>`; return; }
+  if (!dur) { out.innerHTML = "Süre bilinmiyor: video bütün olarak indirilecek."; return; }
+  const b = planBounds(s, e, chunkMin() * 60);
+  const n = b.length - 1;
+  const list = [];
+  for (let i = 0; i < n && i < 6; i++) list.push(`${hms(b[i])}–${hms(b[i + 1])}`);
+  if (n > 6) list.push("…");
+  out.innerHTML = `<b>${n} parça</b> · toplam ${fmtTime(e - s)}<br>${list.join(" · ")}`;
+}
+
+function syncSliders() {
+  if (!video || !video.duration) return;
+  const { s, e } = getRange();
+  if (!Number.isNaN(s)) $("#rStart").value = Math.min(s, video.duration);
+  if (!Number.isNaN(e) && e != null) $("#rEnd").value = Math.min(e, video.duration);
+  paintTrack();
+}
+function paintTrack() {
+  const max = +$("#rEnd").max || 1;
+  const a = +$("#rStart").value, b = +$("#rEnd").value;
+  $("#sel").style.left = (a / max * 100) + "%";
+  $("#sel").style.width = (Math.max(0, b - a) / max * 100) + "%";
+}
+function setRange(a, b) {
+  $("#tStart").value = hms(a); $("#tEnd").value = hms(b);
+  syncSliders(); updatePlan();
+}
+
+["rStart", "rEnd"].forEach((id) => $("#" + id).addEventListener("input", () => {
+  let a = +$("#rStart").value, b = +$("#rEnd").value;
+  if (a > b - 1) { if (id === "rStart") a = b - 1; else b = a + 1; }
+  setRange(Math.max(0, a), Math.min(+$("#rEnd").max, b));
+}));
+["tStart", "tEnd"].forEach((id) => $("#" + id).addEventListener("input", () => { syncSliders(); updatePlan(); }));
+document.querySelectorAll("input[name=chunk]").forEach((r) => r.addEventListener("change", updatePlan));
+document.querySelectorAll(".quick button").forEach((b) => b.addEventListener("click", () => {
+  const d = video && video.duration; if (!d) return;
+  if (b.dataset.q === "all") setRange(0, d);
+  if (b.dataset.q === "first") setRange(0, Math.min(3600, d));
+  if (b.dataset.q === "last") setRange(Math.max(0, d - 3600), d);
+}));
+
+function resetPick() { video = null; $("#pick").hidden = true; }
+
+async function probe(url) {
+  const seq = ++probeSeq, msg = $("#probeMsg");
+  resetPick();
+  if (!/^https?:\/\/\S+$/i.test(url)) { msg.className = "msg"; msg.textContent = ""; return; }
+  msg.className = "msg"; msg.textContent = "Video bilgisi alınıyor…";
   try {
-    await api("/api/jobs", { method: "POST", body: JSON.stringify({ url: $("#url").value, chunk: +chunk }) });
-    $("#url").value = ""; msg.textContent = "Sıraya eklendi.";
-    setTimeout(() => (msg.textContent = ""), 2500);
-    lastJson = ""; refresh();
-  } catch (e) { msg.className = "msg err"; msg.textContent = e.message; }
+    const info = await api("/api/probe", { method: "POST", body: JSON.stringify({ url }) });
+    if (seq !== probeSeq) return;
+    video = { ...info, url };
+    msg.textContent = "";
+    $("#vtitle").textContent = info.title;
+    $("#vmeta").textContent = [info.uploader, info.duration ? "Süre: " + hms(info.duration) : "Süre bilinmiyor"].filter(Boolean).join(" · ");
+    const th = $("#thumb");
+    if (info.thumbnail) { th.src = info.thumbnail; th.hidden = false; } else th.hidden = true;
+    const d = Math.round(info.duration || 0);
+    $("#rStart").max = $("#rEnd").max = d || 100;
+    $("#dual").hidden = !d;
+    document.querySelector(".times").hidden = !d;
+    document.querySelector(".quick").hidden = !d;
+    $("#pick").hidden = false;
+    setRange(0, d);
+  } catch (e) {
+    if (seq !== probeSeq) return;
+    msg.className = "msg err";
+    msg.innerHTML = esc(e.message) + ` <button type="button" id="retryProbe">Tekrar dene</button>`;
+    $("#retryProbe").onclick = () => probe(url);
+  }
+}
+
+let probeTimer = null;
+$("#url").addEventListener("input", () => {
+  clearTimeout(probeTimer);
+  probeTimer = setTimeout(() => probe($("#url").value.trim()), 500);
 });
 
 $("#pasteBtn").addEventListener("click", async () => {
-  try { $("#url").value = (await navigator.clipboard.readText()).trim(); }
+  try { $("#url").value = (await navigator.clipboard.readText()).trim(); probe($("#url").value); }
   catch (_) { $("#url").focus(); }
+});
+
+$("#startBtn").addEventListener("click", async () => {
+  const msg = $("#addMsg");
+  if (!video) return;
+  const { s, e } = getRange();
+  if (Number.isNaN(s) || Number.isNaN(e) || (e != null && s >= e)) { msg.className = "msg err"; msg.textContent = "Aralığı kontrol edin."; return; }
+  const full = !video.duration || (s <= 0 && e >= video.duration - 0.5);
+  msg.className = "msg"; msg.textContent = "Ekleniyor…";
+  try {
+    await api("/api/jobs", { method: "POST", body: JSON.stringify({
+      url: video.url, chunk: chunkMin(), start: s, end: full ? null : e, title: video.title }) });
+    $("#url").value = ""; resetPick();
+    msg.textContent = "Sıraya eklendi. İlk parça hazır olunca aşağıda görünecek.";
+    setTimeout(() => (msg.textContent = ""), 4000);
+    lastJson = ""; refresh();
+  } catch (err) { msg.className = "msg err"; msg.textContent = err.message; }
 });
 
 async function loadSettings() {

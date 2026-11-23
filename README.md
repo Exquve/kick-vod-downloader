@@ -1,8 +1,9 @@
 # Kick VOD İndirici
 
-Windows PC'nizde çalışır, telefondan kullanılır. Kick VOD linkini telefondan yapıştırırsınız;
-PC videoyu indirir, seçtiğiniz sürelik parçalara böler ve her parça için telefona
-**İndir** ve **Infuse** butonları verir.
+Windows PC'nizde çalışır, telefondan kullanılır. Kick VOD linkini telefondan yapıştırırsınız,
+hangi aralığı istediğinizi ve parça süresini seçersiniz. PC **yalnızca o aralığı, parça parça**
+indirir; her parça biter bitmez telefona **İndir** ve **Infuse** butonları gelir. Tüm VOD'un
+inmesini beklemezsiniz.
 
 ## Kullanım
 
@@ -11,6 +12,10 @@ PC videoyu indirir, seçtiğiniz sürelik parçalara böler ve her parça için 
 3. SmartScreen uyarısı çıkarsa **Ek bilgi → Yine de çalıştır** deyin.
 4. İlk açılışta güvenlik duvarı izni sorulursa **Evet** deyin (yalnızca Özel ağlar için).
 5. Açılan sayfadaki **QR kodu telefonla okutun**. Bitti.
+
+Telefonda: linki yapıştırın → başlık ve süre gelir → aralığı (ör. 1:00:00–3:30:00 ya da "Tümü")
+ve parça süresini seçin → **İndirmeyi başlat**. İlk parça hazır olunca izlemeye başlayabilirsiniz.
+İnternet kesilir ya da uygulama kapanırsa **Kaldığı yerden devam** biten parçaları tekrar indirmez.
 
 Uygulama saatin yanındaki tepside durur: **Telefondan aç (QR)**, **İndirme klasörünü aç**,
 **Çıkış**. Çıkış'a basınca hiçbir şey arka planda çalışmaya devam etmez.
@@ -22,9 +27,10 @@ Dosyalar `Videolar\KickVODs` içine iner (Ayarlar'dan değiştirilebilir).
 <parameter name="command">cd /home/user/kick-vod-downloader && cat > README.md <<'EOF'
 # Kick VOD İndirici
 
-Windows PC'nizde çalışır, telefondan kullanılır. Kick VOD linkini telefondan yapıştırırsınız;
-PC videoyu indirir, seçtiğiniz sürelik parçalara böler ve her parça için telefona
-**İndir** ve **Infuse** butonları verir.
+Windows PC'nizde çalışır, telefondan kullanılır. Kick VOD linkini telefondan yapıştırırsınız,
+hangi aralığı istediğinizi ve parça süresini seçersiniz. PC **yalnızca o aralığı, parça parça**
+indirir; her parça biter bitmez telefona **İndir** ve **Infuse** butonları gelir. Tüm VOD'un
+inmesini beklemezsiniz.
 
 ## Kullanım
 
@@ -33,6 +39,10 @@ PC videoyu indirir, seçtiğiniz sürelik parçalara böler ve her parça için 
 3. SmartScreen uyarısı çıkarsa **Ek bilgi → Yine de çalıştır** deyin.
 4. İlk açılışta güvenlik duvarı izni sorulursa **Evet** deyin (yalnızca Özel ağlar için).
 5. Açılan sayfadaki **QR kodu telefonla okutun**. Bitti.
+
+Telefonda: linki yapıştırın → başlık ve süre gelir → aralığı (ör. 1:00:00–3:30:00 ya da "Tümü")
+ve parça süresini seçin → **İndirmeyi başlat**. İlk parça hazır olunca izlemeye başlayabilirsiniz.
+İnternet kesilir ya da uygulama kapanırsa **Kaldığı yerden devam** biten parçaları tekrar indirmez.
 
 Uygulama saatin yanındaki tepside durur: **Telefondan aç (QR)**, **İndirme klasörünü aç**,
 **Çıkış**. Çıkış'a basınca hiçbir şey arka planda çalışmaya devam etmez.
@@ -79,8 +89,12 @@ Chrome/Edge açıkken çerezleri okunamayabilir.
 |---|---|
 | `kickindirici/main.py` | Tek örnek kilidi, Job Object, güvenlik duvarı, sunucu (waitress), tepsi |
 | `kickindirici/jobs.py` | Kalıcı iş kuyruğu (sırayla, tek tek), iptal/silme/tekrar deneme |
-| `kickindirici/ytdlp.py` | Resmi `yt-dlp.exe`'yi `%LOCALAPPDATA%\KickIndirici\bin` içine indirir, her açılışta `-U`; ilerleme ayrıştırma |
-| `kickindirici/splitter.py` | ffmpeg segment muxer ile `-c copy` bölme (tek geçiş, anahtar karede kesim, `+faststart`) |
+| `kickindirici/ytdlp.py` | Resmi `yt-dlp.exe`'yi `%LOCALAPPDATA%\KickIndirici\bin` içine indirir, her açılışta `-U`; video bilgisini ve HLS adresini çözer |
+| `kickindirici/hls.py` | Seçilen aralığın HLS segmentlerini 8 paralel bağlantıyla indirip ffmpeg'e (`-c copy`, `+faststart`) akıtır; parçalar segment sınırından kesilir, boşluk/çakışma olmaz |
+| `kickindirici/splitter.py` | Parça planı (son parça 1 dk'dan kısaysa öncekine eklenir), dosya adları |
+
+HLS olmayan ya da doğrudan okunamayan kaynaklarda (ör. şifreli) yedek olarak
+`yt-dlp --download-sections` ile aynı parça parça akış kullanılır.
 | `kickindirici/web.py` | Flask arayüzü/API, HTTP Range destekli dosya servisi, erişim anahtarı |
 | `kickindirici/procs.py` | Alt süreç kaydı, `KILL_ON_JOB_CLOSE` Job Object |
 | `kickindirici/tunnel.py` | İsteğe bağlı Cloudflare Quick Tunnel |

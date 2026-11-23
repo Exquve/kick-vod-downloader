@@ -34,24 +34,15 @@ def test_part_name():
     assert splitter.part_name("Yayın", 7, 120) == "Yayın - Parça 007.mp4"
 
 
-def test_real_split(test_video, tmp_path):
-    src = tmp_path / "Başlık %d test.mp4"
-    src.write_bytes(test_video.read_bytes())
-    progress = []
-    files = splitter.split(src, tmp_path, "Başlık %d test", 60, on_progress=progress.append)
-    names = [f.name for f in files]
-    # 200 sn / 60 sn -> 60,120,180 ; son parça 20 sn < 60 -> 3 parça
-    assert names == [f"Başlık %d test - Parça 0{i}.mp4" for i in (1, 2, 3)]
-    assert not src.exists(), "orijinal dosya silinmeli"
-    durs = [splitter.probe_duration(f) for f in files]
-    assert sum(durs) == pytest.approx(200, abs=1.5)
-    assert durs[0] == pytest.approx(60, abs=2.5)
-    assert durs[-1] == pytest.approx(80, abs=2.5)
-    assert progress and progress[-1] == 100.0
+def test_plan_bounds_with_offset():
+    assert splitter.plan_bounds(600, 600 + 3 * 3600 + 30, 3600) == [600, 4200, 7800, 600 + 3 * 3600 + 30]
+    assert splitter.plan_bounds(0, 3000, 0) == [0, 3000]
+    assert splitter.plan_bounds(0, 7200 + 59, 7200) == [0, 7200 + 59]
 
 
-def test_no_split_when_not_long_enough(test_video, tmp_path):
-    src = tmp_path / "v.mp4"
-    src.write_bytes(test_video.read_bytes())
-    files = splitter.split(src, tmp_path, "v", 180)
-    assert files == [src] and src.exists()
+def test_fmt_time():
+    assert splitter.fmt_time(3723) == "1:02:03"
+
+
+def test_probe_duration(test_video):
+    assert splitter.probe_duration(test_video) == pytest.approx(200, abs=0.5)

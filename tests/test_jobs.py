@@ -155,3 +155,41 @@ def test_file_path_only_known_files(tmp_path):
     assert m.file_path(j.id, "../jobs.json") is None
     assert m.file_path("yok", "x") is None
     m.stop()
+
+
+def test_plan_parts_hls_aligned_and_named():
+    from kickindirici import hls
+    pl = hls.Playlist([hls.Segment(f"{i}.ts", i * 4.0, 4.0) for i in range(50)])  # 200 sn
+    parts = jobs.plan_parts("Yayın", 30, 190, pl.total, 1, pl)
+    assert [p["name"] for p in parts] == ["Yayın - Parça 01.mp4", "Yayın - Parça 02.mp4"]
+    assert parts[0]["start"] == 28 and parts[0]["end"] == parts[1]["start"] == 92
+    assert parts[1]["end"] == 192
+    assert all(p["status"] == jobs.QUEUED for p in parts)
+
+
+def test_plan_parts_single_names():
+    assert jobs.plan_parts("Yayın", 0, None, 7200, 0, None)[0]["name"] == "Yayın.mp4"
+    one = jobs.plan_parts("Yayın", 600, 1800, 7200, 120, None)
+    assert len(one) == 1 and one[0]["name"] == "Yayın (0.10.00-0.30.00).mp4"
+    unknown = jobs.plan_parts("Yayın", 0, None, None, 60, None)
+    assert unknown[0]["end"] is None
+
+
+def test_plan_parts_end_clamped_to_total():
+    parts = jobs.plan_parts("x", 0, 99999, 7300, 60, None)
+    assert parts[-1]["end"] == 7300 and len(parts) == 3
+
+
+def test_add_stores_range(tmp_path):
+    m, _ = make(tmp_path, fake_processor([]))
+    j = m.add("u", 60, start=120, end=3600, title="T")
+    assert (j.start, j.end, j.title) == (120, 3600, "T")
+    m2 = jobs.JobManager(tmp_path / "jobs.json", lambda: tmp_path, fake_processor([]))
+    assert (m2.get(j.id).start, m2.get(j.id).end) == (120, 3600)
+
+
+def test_hls_source():
+    assert jobs.hls_source({"url": "https://a/i.m3u8", "protocol": "m3u8_native",
+                            "http_headers": {"User-Agent": "x"}}) == ("https://a/i.m3u8", {"User-Agent": "x"})
+    assert jobs.hls_source({"url": "https://a/v.mp4", "protocol": "https"}) is None
+    assert jobs.hls_source({"requested_formats": [{}, {}], "url": "x", "protocol": "m3u8"}) is None

@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 import qrcode
 import qrcode.image.svg
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 from . import __version__, jobs as jobsmod, netinfo, procs, winutil, ytdlp
 from .config import CHUNK_CHOICES
@@ -24,8 +24,9 @@ PROXY_HEADERS = ("Cf-Connecting-Ip", "Cf-Ray", "X-Forwarded-For", "Forwarded")
 class AppState:
     """Web katmanının ihtiyaç duyduğu her şey (testlerde kolayca taklit edilir)."""
 
-    def __init__(self, cfg, manager, tunnel=None, port: int = 8765, on_quit=None):
+    def __init__(self, cfg, manager, tunnel=None, port: int = 8765, on_quit=None, prober=None):
         self.cfg = cfg
+        self.prober = prober
         self.manager = manager
         self.tunnel = tunnel
         self.port = port
@@ -134,15 +135,42 @@ def create_app(state: AppState) -> Flask:
         out = []
         for j in state.manager.list():
             d = j.public()
-            for f in d["files"]:
+            have = {f["name"] for f in d["files"]}
+
+            def links(f: dict) -> None:
                 path = f"/f/{j.id}/{quote(f['name'])}"
                 full = f"{base}{path}?k={k}"
                 f["download"] = f"{path}?dl=1"
                 f["url"] = full
                 f["infuse"] = "infuse://x-callback-url/play?url=" + quote(full, safe="")
+
+            for f in d["files"]:
+                links(f)
+            for part in d["parts"]:
+                if part.get("status") == "done" and part.get("name") in have:
+                    links(part)
             out.append(d)
         return jsonify(jobs=out, ytdlp_ready=ytdlp.is_ready(), ytdlp_error=ytdlp.ready_error(),
                        version=__version__)
+
+    def valid_url(url: str) -> bool:
+        return url.lower().startswith(("http://", "https://")) and len(url) < 2000
+
+    @app.post("/api/probe")
+    def probe():
+        data = request.get_json(silent=True) or {}
+        url = str(data.get("url", "")).strip()
+        if not valid_url(url):
+            return jsonify(error="Geçerli bir link yapıştırın (https://kick.com/...)."), 400
+        if state.prober is None:
+            return jsonify(error="Önizleme kullanılamıyor."), 503
+        if not ytdlp.wait_ready(60) or not ytdlp.ytdlp_path().exists():
+            return jsonify(error="yt-dlp henüz hazır değil, biraz sonra tekrar deneyin."), 503
+        try:
+            info = state.prober.get(url)
+        except Exception as e:
+            return jsonify(error=str(e) or "Video bilgisi alınamadı."), 422
+        return jsonify(jobsmod.Prober.summary(info))
 
     @app.post("/api/jobs")
     def add_job():
@@ -150,13 +178,18 @@ def create_app(state: AppState) -> Flask:
         url = str(data.get("url", "")).strip()
         try:
             chunk = int(data.get("chunk", state.cfg["default_chunk"]))
+            start = float(data.get("start") or 0)
+            end = data.get("end")
+            end = float(end) if end not in (None, "") else None
         except (TypeError, ValueError):
-            chunk = -1
-        if not url.lower().startswith(("http://", "https://")):
+            return jsonify(error="Geçersiz değer."), 400
+        if not valid_url(url):
             return jsonify(error="Geçerli bir link yapıştırın (https://kick.com/...)."), 400
         if chunk not in CHUNK_CHOICES:
             return jsonify(error="Geçersiz parça süresi."), 400
-        job = state.manager.add(url, chunk)
+        if start < 0 or (end is not None and end - start < 1):
+            return jsonify(error="Bitiş, başlangıçtan sonra olmalı."), 400
+        job = state.manager.add(url, chunk, start, end, str(data.get("title") or "")[:300])
         return jsonify(job=job.public()), 201
 
     @app.post("/api/jobs/<job_id>/cancel")
