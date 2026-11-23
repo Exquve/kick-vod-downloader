@@ -147,10 +147,12 @@ def main() -> int:
     print("2) İçteki süreç zorla öldürüldü (Job Object)")
     root, port = start(cmd, appdata)
     pids = spawn_children(root, port)
-    innermost(root).kill()
+    inner = innermost(root)
+    nested = inner.pid != root.pid
+    inner.kill()
     results.append(verify_gone(pids, "Zorla kapatma sonrası alt süreçler öldü"))
 
-    if innermost(root).pid != root.pid or os.name == "nt":
+    if nested:
         print("3) Dıştaki süreç zorla öldürüldü")
         root, port = start(cmd, appdata)
         pids = spawn_children(root, port)
