@@ -23,33 +23,6 @@ Uygulama saatin yanındaki tepside durur: **Telefondan aç (QR)**, **İndirme kl
 Dosyalar `Videolar\KickVODs` içine iner (Ayarlar'dan değiştirilebilir).
 
 <details>
-<invoke name="Bash">
-<parameter name="command">cd /home/user/kick-vod-downloader && cat > README.md <<'EOF'
-# Kick VOD İndirici
-
-Windows PC'nizde çalışır, telefondan kullanılır. Kick VOD linkini telefondan yapıştırırsınız,
-hangi aralığı istediğinizi ve parça süresini seçersiniz. PC **yalnızca o aralığı, parça parça**
-indirir; her parça biter bitmez telefona **İndir** ve **Infuse** butonları gelir. Tüm VOD'un
-inmesini beklemezsiniz.
-
-## Kullanım
-
-1. [Releases](https://github.com/Exquve/kick-vod-downloader/releases/latest) sayfasından **KickIndirici.exe**'yi indirin.
-2. Çift tıklayın. Kurulum yok, Python ya da ffmpeg gerekmiyor.
-3. SmartScreen uyarısı çıkarsa **Ek bilgi → Yine de çalıştır** deyin.
-4. İlk açılışta güvenlik duvarı izni sorulursa **Evet** deyin (yalnızca Özel ağlar için).
-5. Açılan sayfadaki **QR kodu telefonla okutun**. Bitti.
-
-Telefonda: linki yapıştırın → başlık ve süre gelir → aralığı (ör. 1:00:00–3:30:00 ya da "Tümü")
-ve parça süresini seçin → **İndirmeyi başlat**. İlk parça hazır olunca izlemeye başlayabilirsiniz.
-İnternet kesilir ya da uygulama kapanırsa **Kaldığı yerden devam** biten parçaları tekrar indirmez.
-
-Uygulama saatin yanındaki tepside durur: **Telefondan aç (QR)**, **İndirme klasörünü aç**,
-**Çıkış**. Çıkış'a basınca hiçbir şey arka planda çalışmaya devam etmez.
-
-Dosyalar `Videolar\KickVODs` içine iner (Ayarlar'dan değiştirilebilir).
-
-<details>
 <summary><b>Farklı ağdan (mobil veri vb.) kullanmak</b></summary>
 
 İki yol var:
