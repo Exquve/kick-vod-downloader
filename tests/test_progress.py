@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from kickindirici import ytdlp
 
 
@@ -45,7 +47,7 @@ def test_download_args_contains_required_flags():
     j = " ".join(a)
     assert "--newline" in a and "--progress-template" in a
     assert a[a.index("-N") + 1] == "8"
-    assert a[a.index("--ffmpeg-location") + 1] == "/x/bin"
+    assert Path(a[a.index("--ffmpeg-location") + 1]) == Path("/x/bin")
     assert a[a.index("--cookies-from-browser") + 1] == "firefox"
     assert a[-1] == "https://kick.com/video/x" and a[-2] == "--"
     assert "[KP]" in j
