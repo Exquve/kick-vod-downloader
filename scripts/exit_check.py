@@ -126,6 +126,11 @@ def innermost(root: psutil.Process) -> psutil.Process:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except AttributeError:
+            pass
     cmd = sys.argv[1:]
     if not cmd:
         print(__doc__)
