@@ -34,7 +34,7 @@ function jobHtml(j) {
   const st = STATUS[j.status] || j.status;
   const pct = Math.max(0, Math.min(100, j.percent || 0));
   let html = `<div class="card job" data-id="${j.id}">
-    <div class="top"><div><div class="title">${esc(j.title || "Bilgi alınıyor…")}</div>
+    <div class="top"><div><div class="title">${esc(j.title || (ACTIVE.has(j.status) || j.status === "queued" ? "Bilgi alınıyor…" : "Başlıksız video"))}</div>
     <div class="url">${esc(j.url)}</div></div>
     <span class="badge ${j.status}">${st}</span></div>`;
   if (ACTIVE.has(j.status) || j.status === "queued") {
@@ -46,7 +46,7 @@ function jobHtml(j) {
       if (j.total) stats.push(fmtBytes(j.downloaded) + " / " + fmtBytes(j.total));
     }
     if (j.chunk) stats.push(j.chunk + " dk parçalar"); else stats.push("Bölme yok");
-    html += `<div class="bar"><i style="width:${pct}%"></i></div><div class="stats">${stats.map((s) => `<span>${esc(s)}</span>`).join("")}</div>`;
+    html += (j.status === "queued" ? `<div class="stats" style="margin-top:10px">` : `<div class="bar"><i style="width:${pct}%"></i></div><div class="stats">`) + `${stats.map((s) => `<span>${esc(s)}</span>`).join("")}</div>`;
   }
   if (j.error) html += `<div class="err-text">${esc(j.error)}</div>`;
   if (j.files && j.files.length) {
