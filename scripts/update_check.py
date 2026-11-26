@@ -113,7 +113,16 @@ def main() -> int:
     def restarted():
         now = {p.pid for p in app_procs(exe)}
         return now and not (now & old_pids) and ping(port)
-    wait(restarted, 120, "güncelleme sonrası yeniden başlama")
+    try:
+        wait(restarted, 120, "güncelleme sonrası yeniden başlama")
+    except SystemExit:
+        print("[HATA] yeniden başlamadı. Süreçler:", [(p.pid, p.name()) for p in app_procs(exe)])
+        print("dosyalar:", sorted(f.name for f in work.iterdir()), "| api çağrısı:", calls["latest"])
+        print("----- log.txt -----")
+        print((appdata / "log.txt").read_text("utf-8", "replace")[-6000:])
+        for p in app_procs(exe):
+            p.kill()
+        return 1
     new_pids = {p.pid for p in app_procs(exe)}
     print("yeni süreçler:", sorted(new_pids), "aynı port", port)
     ok = True
