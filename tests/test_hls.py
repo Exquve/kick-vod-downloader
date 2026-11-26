@@ -1,4 +1,6 @@
+import json
 import shutil
+from pathlib import Path
 import threading
 
 import pytest
@@ -69,20 +71,50 @@ def test_load_playlist_and_download_only_needed_segments(hls_dir, http_root, tmp
     assert progress[-1] == (len(idxs), len(idxs))
 
 
-def test_download_cancel_cleans_up(hls_dir, http_root, tmp_path):
-    root, base, _ = http_root
+def test_cancel_then_resume_fetches_only_remaining(hls_dir, http_root, tmp_path):
+    root, base, hits = http_root
     shutil.copytree(hls_dir, root, dirs_exist_ok=True)
     pl = hls.load_playlist(f"{base}/v/index.m3u8")
+    idxs = list(range(len(pl.segments)))  # 50 segment, 200 sn
     cancel = threading.Event()
     out = tmp_path / "x.mp4"
 
     def prog(k, n, b):
-        if k == 3:
+        if k >= 20:
             cancel.set()
+    hits.clear()
     with pytest.raises(InterruptedError):
-        hls.download_part(pl, list(range(len(pl.segments))), str(out), ffmpeg_path(),
-                          cancel=cancel, on_progress=prog, workers=1)
-    assert not out.exists() and not (tmp_path / "x.mp4.part.mp4").exists()
+        hls.download_part(pl, idxs, str(out), ffmpeg_path(), cancel=cancel, on_progress=prog, workers=2)
+    raw, state, tmp = hls.part_files(str(out))
+    assert not out.exists() and Path(raw).exists() and Path(state).exists()
+    done_k = json.loads(Path(state).read_text())["k"]
+    assert done_k >= 20
+    hits.clear()
+    seen = []
+    hls.download_part(pl, idxs, str(out), ffmpeg_path(), on_progress=lambda k, n, b: seen.append(k))
+    fetched = sorted(int(h.split("seg")[1][:3]) for h in hits if h.endswith(".ts"))
+    assert fetched == list(range(done_k, 50)), "yalnızca kalan segmentler indirilmeli"
+    assert seen[0] == done_k
+    assert splitter.probe_duration(out) == pytest.approx(200, abs=1)
+    assert not Path(raw).exists() and not Path(state).exists() and not Path(tmp).exists()
+
+
+def test_resume_after_crash_with_torn_write(hls_dir, http_root, tmp_path):
+    """Program son segmenti yazarken çöktüyse (fazladan yarım bayt) dosya kırpılıp devam edilir."""
+    root, base, hits = http_root
+    shutil.copytree(hls_dir, root, dirs_exist_ok=True)
+    pl = hls.load_playlist(f"{base}/v/index.m3u8")
+    idxs = list(range(10))
+    cancel = threading.Event()
+    out = tmp_path / "y.mp4"
+    with pytest.raises(InterruptedError):
+        hls.download_part(pl, idxs, str(out), ffmpeg_path(), cancel=cancel, workers=1,
+                          on_progress=lambda k, n, b: k >= 4 and cancel.set())
+    raw, state, _ = hls.part_files(str(out))
+    with open(raw, "ab") as f:
+        f.write(b"\x47" * 1000)  # yarım kalmış yazma
+    hls.download_part(pl, idxs, str(out), ffmpeg_path())
+    assert splitter.probe_duration(out) == pytest.approx(40, abs=1)
 
 
 def test_http_error_propagates(http_root, tmp_path):

@@ -3,7 +3,7 @@ const $ = (s) => document.querySelector(s);
 const STATUS = {
   queued: "Sırada", preparing: "Hazırlanıyor", downloading: "İndiriliyor",
   merging: "Birleştiriliyor", splitting: "Bölünüyor", done: "Bitti",
-  error: "Hata", canceled: "İptal edildi",
+  error: "Hata", canceled: "İptal edildi", paused: "Durduruldu",
 };
 const ACTIVE = new Set(["preparing", "downloading", "merging", "splitting"]);
 
@@ -53,10 +53,12 @@ function partHtml(p, n) {
   const label = n > 1 ? `Parça ${String(p.index).padStart(2, "0")}` : "Video";
   const rng = p.end != null ? `${hms(p.start)} – ${hms(p.end)}` : "";
   let st = { queued: "Sırada", downloading: `İniyor %${(p.percent || 0).toFixed(0)}`, done: "Hazır" }[p.status] || p.status;
+  if (p.status === "downloading" && p.finalizing) st = "Kaydediliyor…";
+  if (p.status === "queued" && p.percent > 0) st = `Yarım · %${Math.floor(p.percent)}`;
   if (p.status === "done" && p.size) st = "Hazır · " + fmtBytes(p.size);
   let h = `<div class="part"><div class="ph"><div><span class="pn">${label}</span> <span class="pt">${rng}</span></div>
     <span class="ps ${p.status}">${esc(st)}</span></div>`;
-  if (p.status === "downloading") h += `<div class="mini"><i style="width:${p.percent || 0}%"></i></div>`;
+  if (p.status === "downloading" || (p.status === "queued" && p.percent > 0)) h += `<div class="mini ${p.status}"><i style="width:${p.percent || 0}%"></i></div>`;
   if (p.status === "done" && p.download) h += fileActs(p);
   return h + `</div>`;
 }
@@ -90,8 +92,10 @@ function jobHtml(j) {
       <div class="name">${esc(f.name)}</div><div class="size">${fmtBytes(f.size)}</div>${fileActs(f)}</div>`).join("") + `</div>`;
   }
   html += `<div class="job-acts">`;
-  if (running || j.status === "queued") html += `<button data-act="cancel" class="danger">İptal</button>`;
-  if (j.status === "error" || j.status === "canceled") html += `<button data-act="retry">${parts.some((p) => p.status === "done") ? "Kaldığı yerden devam" : "Tekrar dene"}</button>`;
+  if (running || j.status === "queued") html += `<button data-act="pause">⏸ Durdur</button>`;
+  if (j.status === "paused") html += `<button data-act="retry" class="primary">▶ Devam et</button>`;
+  const started = parts.some((p) => p.status === "done" || p.percent > 0);
+  if (j.status === "error" || j.status === "canceled") html += `<button data-act="retry">${started ? "Kaldığı yerden devam" : "Tekrar dene"}</button>`;
   if (!running) html += `<button data-act="delete" class="danger">Sil</button>`;
   html += `</div></div>`;
   return html;
@@ -125,6 +129,7 @@ $("#jobs").addEventListener("click", async (ev) => {
   const id = b.closest(".job").dataset.id, act = b.dataset.act;
   if (act === "delete" && !confirm("İş ve indirilen dosyaları silinsin mi?")) return;
   if (act === "cancel" && !confirm("İndirme iptal edilsin mi?")) return;
+  // Durdur onay istemez: hiçbir şey kaybolmaz, "Devam et" kaldığı yerden sürdürür
   b.disabled = true;
   try {
     if (act === "delete") await api(`/api/jobs/${id}`, { method: "DELETE" });

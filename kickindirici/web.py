@@ -221,6 +221,10 @@ def create_app(state: AppState) -> Flask:
     def cancel_job(job_id):
         return jsonify(ok=state.manager.cancel(job_id))
 
+    @app.post("/api/jobs/<job_id>/pause")
+    def pause_job(job_id):
+        return jsonify(ok=state.manager.pause(job_id))
+
     @app.post("/api/jobs/<job_id>/retry")
     def retry_job(job_id):
         return jsonify(ok=state.manager.retry(job_id))

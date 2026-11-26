@@ -62,7 +62,11 @@ def http_root(tmp_path):
 
     root = tmp_path / "www"
     root.mkdir()
-    hits: list[str] = []
+
+    class Hits(list):
+        delay = 0.0  # testler .ts isteklerini yavaşlatmak için ayarlayabilir
+
+    hits = Hits()
 
     class H(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *a):
@@ -70,6 +74,9 @@ def http_root(tmp_path):
 
         def do_GET(self):
             hits.append(self.path)
+            if hits.delay and self.path.endswith(".ts"):
+                import time
+                time.sleep(hits.delay)
             rng = self.headers.get("Range")
             path = Path(self.translate_path(self.path))
             if not rng or not path.is_file():

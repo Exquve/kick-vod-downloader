@@ -9,6 +9,7 @@ Parçalar segment sınırından kesilir: aradaki boşluk/çakışma olmaz.
 from __future__ import annotations
 
 import collections
+import json
 import logging
 import os
 import re
@@ -38,10 +39,6 @@ class Meter:
     def add(self, n: int) -> None:
         with self._lock:
             self.total += n
-
-
-class _PipeClosed(Exception):
-    pass
 
 
 class Unsupported(Exception):
@@ -187,95 +184,133 @@ def assign(pl: Playlist, bounds: list[float]) -> list[list[int]]:
     return groups
 
 
+def _read_state(path: str) -> dict | None:
+    try:
+        with open(long_path(path), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _write_state(path: str, data: dict) -> None:
+    tmp = path + ".tmp"
+    try:
+        with open(long_path(tmp), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(long_path(tmp), long_path(path))
+    except OSError:  # antivirüs kilidi vb.: bir sonraki segmentte tekrar yazılır
+        pass
+
+
+def part_files(out_path: str) -> tuple[str, str, str]:
+    """(ham veri, durum dosyası, mp4'e çevirme ara dosyası)"""
+    return out_path + ".part.ts", out_path + ".part.json", out_path + ".part.mp4"
+
+
 def download_part(pl: Playlist, idxs: list[int], out_path: str, ffmpeg: str,
                   headers: dict | None = None, workers: int = 8,
                   cancel: threading.Event | None = None,
                   on_progress: Callable[[int, int, int], None] | None = None,
                   on_process: Callable[[subprocess.Popen | None], None] | None = None,
-                  meter: Meter | None = None) -> None:
-    """idxs segmentlerini indirip out_path'e mp4 olarak yazar.
+                  meter: Meter | None = None,
+                  on_finalize: Callable[[], None] | None = None) -> None:
+    """idxs segmentlerini indirip out_path'e mp4 olarak yazar; kaldığı yerden devam edebilir.
 
-    on_progress(yazılan_segment, toplam_segment, yazılan_bayt) yazma sırasında ve
+    Segmentler sırayla ham dosyaya (.part.ts) eklenir ve her segmentten sonra kaçıncı
+    segmentte kalındığı .part.json'a yazılır. Durdurma, internet kopması ya da programın
+    kapanması sonrası aynı çağrı yalnızca kalan segmentleri indirir. Hepsi inince ham dosya
+    yeniden kodlamadan (-c copy, +faststart) mp4'e çevrilir.
+
+    on_progress(yazılan_segment, toplam_segment, ham_dosya_baytı) yazma sırasında ve
     beklerken yarım saniyede bir çağrılır (hız göstergesi bekleme anlarında da güncel kalsın).
     """
     cancel = cancel or threading.Event()
-    tmp = out_path + ".part.mp4"
-    in_fmt = [] if pl.init_uri else ["-f", "mpegts"]
-    args = [ffmpeg, "-hide_banner", "-y", "-v", "error", *in_fmt, "-i", "pipe:0",
-            "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart",
-            "-f", "mp4", tmp]
-    p = procs.popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    raw, state_path, tmp = part_files(out_path)
+    n = len(idxs)
+    sig = {"n": n, "first": pl.segments[idxs[0]].uri if idxs else "",
+           "last": pl.segments[idxs[-1]].uri if idxs else "", "init": pl.init_uri}
+    k, offset = 0, 0
+    st = _read_state(state_path)
+    if st and st.get("sig") == sig and os.path.exists(long_path(raw)):
+        k, offset = int(st.get("k", 0)), int(st.get("offset", 0))
+        if os.path.getsize(long_path(raw)) < offset:  # tutarsız: baştan başla
+            k, offset = 0, 0
+    if k:
+        log.info("Parça kaldığı yerden devam ediyor: %d/%d segment", k, n)
+
+    if k < n:
+        f = open(long_path(raw), "r+b" if k else "wb")
+        ex = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="seg")
+        try:
+            f.truncate(offset)
+            f.seek(offset)
+            if not k and pl.init_uri:
+                data = fetch(pl.init_uri, headers, cancel=cancel, meter=meter)
+                f.write(data)
+                offset += len(data)
+            queue: collections.deque = collections.deque()
+            it = iter(idxs[k:])
+
+            def submit_next() -> None:
+                i = next(it, None)
+                if i is not None:
+                    queue.append(ex.submit(fetch, pl.segments[i].uri, headers, 30, 6, cancel, meter))
+
+            for _ in range(workers * 2):
+                submit_next()
+            if on_progress:
+                on_progress(k, n, offset)
+            while queue:
+                fut = queue.popleft()
+                while True:
+                    if cancel.is_set():
+                        raise InterruptedError("iptal")
+                    try:
+                        data = fut.result(timeout=0.5)
+                        break
+                    except TimeoutError:
+                        if on_progress:
+                            on_progress(k, n, offset)
+                f.write(data)
+                f.flush()
+                k += 1
+                offset += len(data)
+                _write_state(state_path, {"sig": sig, "k": k, "offset": offset})
+                if on_progress:
+                    on_progress(k, n, offset)
+                submit_next()
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+            f.close()
+
+    # Ham veriyi mp4'e çevir (yeniden kodlama yok)
+    if on_finalize:
+        on_finalize()
+    if cancel.is_set():
+        raise InterruptedError("iptal")
+    in_fmt = ["-f", "mpegts"] if not pl.init_uri else []
+    args = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-v", "error", *in_fmt, "-i", raw,
+            "-map", "0:v?", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart", "-f", "mp4", tmp]
+    p = procs.popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if on_process:
         on_process(p)
-    err: list[bytes] = []
-    t_err = threading.Thread(target=lambda: err.append(p.stderr.read()), daemon=True)
-    t_err.start()
-    ex = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="seg")
-    ok = False
-
-    def write(data: bytes) -> None:
-        try:
-            p.stdin.write(data)
-        except OSError as e:  # ffmpeg erken kapandı
-            raise _PipeClosed(str(e)) from e
-
     try:
-        if pl.init_uri:
-            write(fetch(pl.init_uri, headers, cancel=cancel, meter=meter))
-        queue: collections.deque = collections.deque()
-        it = iter(idxs)
-
-        def submit_next() -> None:
-            i = next(it, None)
-            if i is not None:
-                queue.append(ex.submit(fetch, pl.segments[i].uri, headers, 30, 6, cancel, meter))
-
-        for _ in range(workers * 2):
-            submit_next()
-        done = nbytes = 0
-        while queue:
-            fut = queue.popleft()
-            while True:
-                if cancel.is_set():
-                    raise InterruptedError("iptal")
-                try:
-                    data = fut.result(timeout=0.5)
-                    break
-                except TimeoutError:
-                    if on_progress:
-                        on_progress(done, len(idxs), nbytes)
-                    continue
-            write(data)
-            done += 1
-            nbytes += len(data)
-            if on_progress:
-                on_progress(done, len(idxs), nbytes)
-            submit_next()
-        try:
-            p.stdin.close()
-        except OSError as e:
-            raise _PipeClosed(str(e)) from e
-        p.wait()
-        t_err.join(timeout=5)
-        if p.returncode != 0:
-            raise RuntimeError("ffmpeg hatası: " + b"".join(err).decode("utf-8", "replace")[-400:])
-        os.replace(long_path(tmp), long_path(out_path))
-        ok = True
-    except _PipeClosed as e:
-        if cancel.is_set():
-            raise InterruptedError("iptal")
-        p.wait(timeout=10)
-        t_err.join(timeout=5)
-        msg = b"".join(err).decode("utf-8", "replace")[-400:]
-        raise RuntimeError(f"Parça yazılamadı: {msg or e}")
+        _, err = p.communicate()
     finally:
-        ex.shutdown(wait=False, cancel_futures=True)
-        if not ok:
-            procs.kill_tree(p)
-            try:
-                os.remove(long_path(tmp))
-            except OSError:
-                pass
         procs.forget(p)
         if on_process:
             on_process(None)
+    if cancel.is_set() or p.returncode != 0:
+        try:
+            os.remove(long_path(tmp))
+        except OSError:
+            pass
+        if cancel.is_set():
+            raise InterruptedError("iptal")
+        raise RuntimeError("ffmpeg hatası: " + (err or b"").decode("utf-8", "replace")[-400:])
+    os.replace(long_path(tmp), long_path(out_path))
+    for leftover in (raw, state_path):
+        try:
+            os.remove(long_path(leftover))
+        except OSError:
+            pass

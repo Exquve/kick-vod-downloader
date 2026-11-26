@@ -83,3 +83,6 @@ a{color:var(--accent)}
 .part .acts{display:flex;gap:8px;margin-top:8px}
 .part .acts .btn{flex:1}
 [hidden]{display:none!important}
+.badge.paused{background:#22303f;color:#8cc4ff}
+.part .ps.queued{color:var(--muted)}
+.part .mini.queued i{background:#8cc4ff}

@@ -111,3 +111,34 @@ def test_resume_skips_finished_parts(manager, hls_dir, http_root):
     assert all(p["status"] == "done" for p in job.parts)
     first = {f"/v/seg{i:03d}.ts" for i in range(0, 15)}
     assert not first & set(hits), "biten 1. parça tekrar indirilmemeli"
+
+
+def test_pause_mid_part_and_resume(manager, hls_dir, http_root):
+    root, base, hits = http_root
+    shutil.copytree(hls_dir, root, dirs_exist_ok=True)
+    hits.delay = 0.03
+    j = manager.add(f"{base}/v/index.m3u8", 0)  # tek parça, 50 segment
+    end = time.time() + 60
+    while time.time() < end:
+        job = manager.get(j.id)
+        if job.parts and job.parts[0].get("percent", 0) >= 30:
+            break
+        time.sleep(0.02)
+    assert manager.pause(j.id)
+    job = run_job(manager, j.id)
+    assert job.status == jobs.PAUSED
+    pct = job.parts[0]["percent"]
+    assert 30 <= pct < 100 and job.parts[0]["status"] == "queued"
+    before = {h for h in hits if h.endswith(".ts")}
+    hits.clear()
+    hits.delay = 0
+    assert manager.retry(j.id)  # "Devam et"
+    job = run_job(manager, j.id)
+    assert job.status == jobs.DONE, job.error
+    again = {h for h in hits if h.endswith(".ts")}
+    k = round(pct * 50 / 100)  # durdurulduğunda yazılmış segment sayısı
+    assert len(again) == 50 - k, "yalnızca kalan segmentler inmeli; öncekiler tekrar inmemeli"
+    assert {f"/v/seg{i:03d}.ts" for i in range(k)}.isdisjoint(again)
+    assert splitter.probe_duration(Path(job.dir) / job.parts[0]["name"]) == pytest.approx(200, abs=1)
+    assert sorted(p.name for p in Path(job.dir).iterdir()) == [job.parts[0]["name"]]
+    assert before

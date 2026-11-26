@@ -140,8 +140,7 @@ def test_persistence_and_interrupted_jobs(tmp_path):
     m2 = jobs.JobManager(tmp_path / "jobs.json", lambda: dl, fake_processor([]))
     assert m2.get(done.id).status == jobs.DONE
     assert m2.get(done.id).files and m2.get(done.id).chunk == 60
-    assert m2.get(running.id).status == jobs.ERROR
-    assert "yarıda" in m2.get(running.id).error
+    assert m2.get(running.id).status == jobs.PAUSED, "kapanışta yarıda kalan iş durdurulmuş sayılır"
     assert m2.get(queued.id).status == jobs.QUEUED
     gate.set()
     m.stop()

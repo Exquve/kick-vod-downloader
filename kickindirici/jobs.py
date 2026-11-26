@@ -20,9 +20,9 @@ from .paths import ffmpeg_path, long_path
 log = logging.getLogger(__name__)
 
 QUEUED, PREPARING, DOWNLOADING, MERGING, SPLITTING = "queued", "preparing", "downloading", "merging", "splitting"
-DONE, ERROR, CANCELED = "done", "error", "canceled"
+DONE, ERROR, CANCELED, PAUSED = "done", "error", "canceled", "paused"
 ACTIVE = {PREPARING, DOWNLOADING, MERGING, SPLITTING}
-FINISHED = {DONE, ERROR, CANCELED}
+FINISHED = {DONE, ERROR, CANCELED, PAUSED}  # çalışmayan durumlar
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v", ".flv"}
 
 
@@ -66,6 +66,7 @@ class JobContext:
         self.manager = manager
         self.job = job
         self.cancel = threading.Event()
+        self.paused = False
         self.proc: subprocess.Popen | None = None
 
     def set_proc(self, p: subprocess.Popen | None) -> None:
@@ -113,11 +114,11 @@ class JobManager:
             except TypeError:
                 continue
             if job.status in ACTIVE:
-                job.status = ERROR
-                job.error = "Uygulama kapandığı için yarıda kaldı. Tekrar deneyebilirsiniz."
+                job.status = PAUSED  # program kapanmıştı; "Devam et" kaldığı yerden sürdürür
+                job.error = ""
             for part in job.parts:
                 if part.get("status") != DONE:
-                    part["status"], part["percent"] = QUEUED, 0.0
+                    part["status"] = QUEUED  # yüzde korunur: kaldığı yeri gösterir
             job.files = [f for f in job.files if Path(job.dir, f["name"]).exists()]
             self._jobs[job.id] = job
 
@@ -177,16 +178,30 @@ class JobManager:
                 self._save()
             return True
 
+    def pause(self, job_id: str) -> bool:
+        """Durdurur; indirilen her şey korunur, 'Devam et' kaldığı segmentten sürdürür."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if not job or job.status in FINISHED:
+                return False
+            if self._current and self._current.job.id == job_id:
+                self._current.paused = True
+                self._cancel_ctx(self._current)
+            else:
+                job.status = PAUSED
+                self._save()
+            return True
+
     def retry(self, job_id: str) -> bool:
         with self._lock:
             job = self._jobs.get(job_id)
-            if not job or job.status not in (ERROR, CANCELED):
+            if not job or job.status not in (ERROR, CANCELED, PAUSED):
                 return False
             job.status, job.error = QUEUED, ""
             job.speed = job.eta = None
             for part in job.parts:
                 if part.get("status") != DONE:
-                    part["status"], part["percent"] = QUEUED, 0.0
+                    part["status"] = QUEUED
             job.created = time.time()
             self._save()
             self._wake.notify_all()
@@ -264,12 +279,12 @@ class JobManager:
                 self._update(job, save=True, status=DONE, percent=100.0, speed=None, eta=None,
                              finished=time.time())
             except (Canceled, InterruptedError):
-                self._update(job, save=True, status=CANCELED, speed=None, eta=None,
-                             finished=time.time())
+                self._update(job, save=True, status=PAUSED if ctx.paused else CANCELED,
+                             speed=None, eta=None, finished=time.time())
             except Exception as e:
                 if ctx.cancel.is_set():
-                    self._update(job, save=True, status=CANCELED, speed=None, eta=None,
-                                 finished=time.time())
+                    self._update(job, save=True, status=PAUSED if ctx.paused else CANCELED,
+                                 speed=None, eta=None, finished=time.time())
                 else:
                     log.exception("İş başarısız: %s", job.url)
                     self._update(job, save=True, status=ERROR, error=str(e) or e.__class__.__name__,
@@ -278,7 +293,8 @@ class JobManager:
                 with self._lock:
                     for part in job.parts:
                         if part.get("status") == DOWNLOADING:
-                            part["status"], part["percent"] = QUEUED, 0.0
+                            part["status"] = QUEUED
+                        part.pop("finalizing", None)
                     self._current = None
                     self._save()
 
@@ -481,6 +497,7 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
                                                 False, name_max)
         parts = job.parts
         _salvage(d, old_parts, parts)
+        _remove_orphans(d, parts)
         ctx.update(save=True, files=list_files(d))
         span = sum(((p["end"] if p["end"] is not None else (total or 0)) - p["start"]) for p in parts) or 1
         rate = _Rate()
@@ -495,7 +512,7 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
             ctx.check()
             p_len = (part["end"] if part["end"] is not None else (total or 0)) - part["start"]
             base_done = done_seconds()
-            part.update(status=DOWNLOADING, percent=0.0)
+            part.update(status=DOWNLOADING, percent=part.get("percent") or 0.0)
             ctx.update(save=True, part_index=part["index"])
             out = str(d / part["name"])
 
@@ -515,7 +532,9 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
                 idxs = hls.assign(pl, [part["start"], part["end"]])[0]
                 hls.download_part(pl, idxs, out, ffmpeg_path(), headers=src[1], cancel=ctx.cancel,
                                   on_process=ctx.set_proc, meter=meter,
-                                  on_progress=lambda k, n, b: progress(k / n))
+                                  on_progress=lambda k, n, b: progress(k / n),
+                                  on_finalize=lambda: part.update(finalizing=True))
+                part.pop("finalizing", None)
             else:
                 _ytdlp_section(ctx, job.url, cookies_browser(), part, total, out, progress)
                 meter.add(_size(out))
@@ -525,6 +544,24 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
         ctx.update(files=list_files(d), part_index=0)
 
     return process
+
+
+def _remove_orphans(d: Path, parts: list[dict]) -> None:
+    """Artık hiçbir parçaya ait olmayan ara dosyaları (.part.ts/.part.json) siler."""
+    keep = set()
+    for p in parts:
+        if p["status"] != DONE:
+            keep.update(Path(x).name for x in hls.part_files(str(d / p["name"]))[:2])
+    try:
+        names = os.listdir(long_path(d))
+    except OSError:
+        return
+    for n in names:
+        if (n.endswith(".part.ts") or n.endswith(".part.json")) and n not in keep:
+            try:
+                os.remove(long_path(d / n))
+            except OSError:
+                pass
 
 
 def _salvage(d: Path, old_parts: list[dict], parts: list[dict]) -> None:
