@@ -89,6 +89,8 @@ def test_cancel_then_resume_fetches_only_remaining(hls_dir, http_root, tmp_path)
     assert not out.exists() and Path(raw).exists() and Path(state).exists()
     done_k = json.loads(Path(state).read_text())["k"]
     assert done_k >= 20
+    import time
+    time.sleep(1)  # durdurma anında yolda olan istekler sunucuya ulaşsın
     hits.clear()
     seen = []
     hls.download_part(pl, idxs, str(out), ffmpeg_path(), on_progress=lambda k, n, b: seen.append(k))
