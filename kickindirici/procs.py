@@ -101,13 +101,27 @@ def _linux_pdeathsig() -> None:  # pragma: no cover - sadece Linux geliştirme o
         pass
 
 
+def clean_env(base: dict | None = None) -> dict:
+    """PyInstaller'ın iç ortam değişkenlerini temizler.
+
+    Biz de yt-dlp.exe de PyInstaller onefile exe'leriyiz. Bu değişkenler miras kalırsa
+    başlatılan exe kendini bizim alt sürecimiz sanıp bizim geçici klasörümüzü kullanır.
+    """
+    env = dict(base if base is not None else os.environ)
+    for k in list(env):
+        if k.startswith("_PYI_") or k in ("_MEIPASS2", "_PYI_PARENT_PROCESS_LEVEL"):
+            env.pop(k, None)
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
 def popen(args: list[str], **kw: Any) -> subprocess.Popen:
     """Konsol penceresi açmadan, kayıtlı bir alt süreç başlatır."""
     if IS_WINDOWS:
         kw["creationflags"] = kw.get("creationflags", 0) | CREATE_NO_WINDOW
     elif os.uname().sysname == "Linux":
         kw.setdefault("preexec_fn", _linux_pdeathsig)
-    env = dict(kw.pop("env", None) or os.environ)
+    env = clean_env(kw.pop("env", None) or os.environ)
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
     kw["env"] = env
@@ -179,15 +193,15 @@ def active_count() -> int:
 def launch_detached(exe: str) -> None:
     """Güncellenen exe'yi bizden bağımsız başlatır (bizim job'ımız kapanınca ölmesin)."""
     if not IS_WINDOWS:
-        subprocess.Popen([exe], start_new_session=True, stdin=subprocess.DEVNULL,
+        subprocess.Popen([exe], start_new_session=True, stdin=subprocess.DEVNULL, env=clean_env(),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
         return
     DETACHED_PROCESS, NEW_GROUP, BREAKAWAY = 0x00000008, 0x00000200, 0x01000000
     try:
-        subprocess.Popen([exe], creationflags=DETACHED_PROCESS | NEW_GROUP | BREAKAWAY,
+        subprocess.Popen([exe], creationflags=DETACHED_PROCESS | NEW_GROUP | BREAKAWAY, env=clean_env(),
                          cwd=os.path.dirname(exe), close_fds=True, stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return
     except OSError as e:  # üst job breakaway'e izin vermiyorsa: Windows kabuğu başlatsın
         log.warning("Breakaway başarısız (%s); explorer ile başlatılıyor", e)
-    subprocess.Popen(["explorer.exe", exe], close_fds=True)
+    subprocess.Popen(["explorer.exe", exe], close_fds=True, env=clean_env())

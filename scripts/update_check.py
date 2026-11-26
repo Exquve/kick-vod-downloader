@@ -136,7 +136,11 @@ def main() -> int:
         print("[HATA] restart.flag kalmış"); ok = False
     if hashlib.sha256(exe.read_bytes()).hexdigest() != sha:
         print("[HATA] exe beklenen dosya değil"); ok = False
+    time.sleep(3)
     log = (appdata / "log.txt").read_text("utf-8", "replace")
+    after = log.split("Güncelleme sonrası açılış", 1)[-1]
+    if "ERROR" in after or "Traceback" in after:
+        print("[HATA] yeni sürüm hata kaydetti:\n" + after[-3000:]); ok = False
     print("log:", *[l for l in log.splitlines() if "Güncelleme" in l or "yeniden" in l.lower()], sep="\n  ")
     urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/api/quit", data=b"", method="POST"), timeout=5)
     time.sleep(1)
