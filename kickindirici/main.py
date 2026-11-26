@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
 
     stopping = threading.Event()
 
-    def shutdown() -> None:
+    def shutdown(after_cleanup=None) -> None:
         if stopping.is_set():
             return
         stopping.set()
@@ -128,6 +128,12 @@ def main(argv: list[str] | None = None) -> int:
             tun.stop()
             procs.kill_all()
             winutil.instance_file().unlink(missing_ok=True)
+            if after_cleanup is not None:
+                # Alt süreçler öldürüldükten SONRA çalışır (ör. güncellenen sürümü başlatmak);
+                # böylece yeni sürüm, kendi alt süreçlerimizle birlikte öldürülmez.
+                after_cleanup()
+        except Exception:
+            log.exception("Kapanışta hata")
         finally:
             logging.shutdown()
             os._exit(0)
@@ -143,13 +149,15 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
         inst.release()
-        try:
-            procs.launch_detached(str(exe))
-        except Exception:
-            log.exception("Yeni sürüm başlatılamadı")
-            restart_flag.unlink(missing_ok=True)
-        time.sleep(2)
-        shutdown()
+
+        def launch() -> None:
+            try:
+                procs.launch_detached(str(exe))
+                log.info("Yeni sürüm başlatıldı")
+            except Exception:
+                log.exception("Yeni sürüm başlatılamadı")
+                restart_flag.unlink(missing_ok=True)
+        shutdown(after_cleanup=launch)
 
     upd = None
     if is_frozen() and (not os.environ.get("KICK_TEST") or os.environ.get("KICK_UPDATE_API")):
