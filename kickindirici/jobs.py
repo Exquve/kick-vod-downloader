@@ -273,28 +273,30 @@ class JobManager:
                 job.status = PREPARING
                 job.error = ""
                 self._save()
+            final: dict = {}
             try:
                 self.processor(ctx)
                 ctx.check()
-                self._update(job, save=True, status=DONE, percent=100.0, speed=None, eta=None,
-                             finished=time.time())
+                final = dict(status=DONE, percent=100.0)
             except (Canceled, InterruptedError):
-                self._update(job, save=True, status=PAUSED if ctx.paused else CANCELED,
-                             speed=None, eta=None, finished=time.time())
+                final = dict(status=PAUSED if ctx.paused else CANCELED)
             except Exception as e:
                 if ctx.cancel.is_set():
-                    self._update(job, save=True, status=PAUSED if ctx.paused else CANCELED,
-                                 speed=None, eta=None, finished=time.time())
+                    final = dict(status=PAUSED if ctx.paused else CANCELED)
                 else:
                     log.exception("İş başarısız: %s", job.url)
-                    self._update(job, save=True, status=ERROR, error=str(e) or e.__class__.__name__,
-                                 speed=None, eta=None, finished=time.time())
+                    final = dict(status=ERROR, error=str(e) or e.__class__.__name__)
             finally:
+                # Parça durumları ve iş durumu aynı anda (kilit altında) güncellenir;
+                # arayüz "Durduruldu" iken parçayı "İniyor" görmez.
                 with self._lock:
                     for part in job.parts:
                         if part.get("status") == DOWNLOADING:
                             part["status"] = QUEUED
                         part.pop("finalizing", None)
+                    final = final or dict(status=ERROR, error="Beklenmeyen hata")
+                    for k, v in dict(final, speed=None, eta=None, finished=time.time()).items():
+                        setattr(job, k, v)
                     self._current = None
                     self._save()
 
