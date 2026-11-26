@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from pathlib import Path
 
 from . import procs
@@ -21,8 +22,25 @@ _RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
              *(f"LPT{i}" for i in range(1, 10))}
 
 
+def _strip_symbols(name: str) -> str:
+    """Emojileri ve görünmez karakterleri atar (dosya adında sorun çıkarıyorlar;
+    Windows'ta emoji 2 karakter sayılır ve yol sınırını hızla doldurur)."""
+    out = []
+    for ch in name:
+        if ord(ch) > 0xFFFF or ch in "\u200d\ufe0e\ufe0f" or unicodedata.category(ch) in ("So", "Cs", "Co", "Cf"):
+            out.append(" ")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def utf16_len(s: str) -> int:
+    """Windows yol uzunluğu UTF-16 birimiyle ölçülür."""
+    return len(s.encode("utf-16-le")) // 2
+
+
 def safe_filename(name: str, max_len: int = 120) -> str:
-    name = _INVALID.sub(" ", name or "")
+    name = _INVALID.sub(" ", _strip_symbols(name or ""))
     name = re.sub(r"\s+", " ", name).strip().strip(".")
     if not name:
         name = "video"
@@ -62,9 +80,9 @@ def plan_cuts(duration: float, chunk_seconds: float) -> list[float]:
     return cuts
 
 
-def part_name(title: str, index: int, total: int, ext: str = ".mp4") -> str:
+def part_name(title: str, index: int, total: int, ext: str = ".mp4", max_len: int = 120) -> str:
     width = max(2, len(str(total)))
-    return f"{safe_filename(title)} - Parça {index:0{width}d}{ext}"
+    return f"{safe_filename(title, max_len)} - Parça {index:0{width}d}{ext}"
 
 
 def plan_bounds(start: float, end: float, chunk_seconds: float) -> list[float]:

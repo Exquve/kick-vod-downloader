@@ -74,3 +74,13 @@ def ffmpeg_path() -> str:
 
 def ffprobe_path() -> str:
     return _tool("ffprobe", "KICK_FFPROBE")
+
+
+def long_path(p: "str | Path") -> str:
+    r"""Windows'ta 260 karakter sınırını aşan yollar için \\?\ önekli mutlak yol."""
+    s = os.path.abspath(str(p))
+    if IS_WINDOWS and not s.startswith("\\\\?\\"):
+        if s.startswith("\\\\"):  # UNC: \\sunucu\pay -> \\?\UNC\sunucu\pay
+            return "\\\\?\\UNC\\" + s[2:]
+        return "\\\\?\\" + s
+    return s

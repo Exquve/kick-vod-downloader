@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import hls, procs, splitter, ytdlp
-from .paths import ffmpeg_path
+from .paths import ffmpeg_path, long_path
 
 log = logging.getLogger(__name__)
 
@@ -217,7 +217,7 @@ class JobManager:
             return None
         if name not in {f["name"] for f in job.files}:
             return None
-        p = Path(job.dir) / name
+        p = Path(long_path(Path(job.dir) / name))
         return p if p.is_file() else None
 
     # ---------- iç ----------
@@ -276,14 +276,18 @@ class JobManager:
                                  speed=None, eta=None, finished=time.time())
             finally:
                 with self._lock:
+                    for part in job.parts:
+                        if part.get("status") == DOWNLOADING:
+                            part["status"], part["percent"] = QUEUED, 0.0
                     self._current = None
+                    self._save()
 
 
 def list_files(directory: Path) -> list[dict]:
     out = []
     for p in sorted(directory.iterdir()):
         if p.is_file() and p.suffix.lower() in VIDEO_EXTS and not p.name.endswith(".part.mp4"):
-            out.append({"name": p.name, "size": p.stat().st_size})
+            out.append({"name": p.name, "size": _size(p)})
     return out
 
 
@@ -334,20 +338,41 @@ def hls_source(info: dict) -> tuple[str, dict] | None:
     return None
 
 
-def _part_file_name(title: str, n: int, i: int, a: float, b: float | None, full: bool) -> str:
+PATH_BUDGET = 240  # Windows MAX_PATH (260) altında güvenli pay
+NAME_SUFFIX_RESERVE = 30  # " - Parça 001.mp4.part.mp4" / " (0.00.00-0.00.00).mp4"
+DIR_TITLE_MAX = 50
+
+
+def name_budget(directory: Path | str) -> int:
+    """Bu klasörde başlık için kullanılabilecek karakter sayısı (20-80)."""
+    room = PATH_BUDGET - splitter.utf16_len(os.path.abspath(str(directory))) - 1 - NAME_SUFFIX_RESERVE
+    return max(20, min(80, room))
+
+
+def _part_file_name(title: str, n: int, i: int, a: float, b: float | None, full: bool,
+                    name_max: int = 80) -> str:
     if n > 1:
-        return splitter.part_name(title, i, n)
+        return splitter.part_name(title, i, n, max_len=name_max)
+    t = splitter.safe_filename(title, name_max)
     if full or b is None:
-        return splitter.safe_filename(title) + ".mp4"
+        return t + ".mp4"
     rng = f"{splitter.fmt_time(a)}-{splitter.fmt_time(b)}".replace(":", ".")
-    return f"{splitter.safe_filename(title)} ({rng}).mp4"
+    return f"{t} ({rng}).mp4"
+
+
+def _exists(p: Path | str) -> bool:
+    return os.path.exists(long_path(p))
+
+
+def _size(p: Path | str) -> int:
+    return os.stat(long_path(p)).st_size
 
 
 def plan_parts(title: str, start: float, end: float | None, total: float | None, chunk_min: int,
-               pl: hls.Playlist | None) -> list[dict]:
+               pl: hls.Playlist | None, name_max: int = 80) -> list[dict]:
     if total is None:  # süre bilinmiyor: tek parça, tamamı
         return [{"index": 1, "start": 0.0, "end": None, "status": QUEUED, "percent": 0.0,
-                 "name": splitter.safe_filename(title) + ".mp4", "size": None}]
+                 "name": splitter.safe_filename(title, name_max) + ".mp4", "size": None}]
     a = min(max(0.0, start), total)
     b = total if end is None else min(max(end, a), total)
     if b - a < 1:
@@ -363,7 +388,7 @@ def plan_parts(title: str, start: float, end: float | None, total: float | None,
     full = a <= 0.5 and b >= total - 0.5
     n = len(ranges)
     return [{"index": i, "start": s, "end": e, "status": QUEUED, "percent": 0.0,
-             "name": _part_file_name(title, n, i, s, e, full), "size": None}
+             "name": _part_file_name(title, n, i, s, e, full, name_max), "size": None}
             for i, (s, e) in enumerate(ranges, 1)]
 
 
@@ -429,7 +454,7 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
         if job.dir and Path(job.dir).is_dir():
             d = Path(job.dir)
         else:
-            d = mgr.download_dir() / f"{splitter.safe_filename(title, 80)} [{job.id}]"
+            d = mgr.download_dir() / f"{splitter.safe_filename(title, DIR_TITLE_MAX)} [{job.id}]"
             d.mkdir(parents=True, exist_ok=True)
 
         pl: hls.Playlist | None = None
@@ -443,9 +468,20 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
         total = pl.total if pl else info.get("duration")
         ctx.update(save=True, title=title, duration=total, dir=str(d), status=DOWNLOADING)
 
-        if not job.parts or any(not Path(d, p["name"]).exists() for p in job.parts if p["status"] == DONE):
-            ctx.update(save=True, parts=plan_parts(title, job.start, job.end, total, job.chunk, pl))
+        name_max = name_budget(d)
+        old_parts = [dict(p) for p in job.parts]
+        if not any(p["status"] == DONE and _exists(Path(d, p["name"])) for p in job.parts):
+            # Hiç biten parça yok: adları güncel kurallarla yeniden planla
+            ctx.update(save=True, parts=plan_parts(title, job.start, job.end, total, job.chunk, pl,
+                                                    name_max))
+        else:
+            for p in job.parts:  # biten parçalar korunur; kalanların adı çok uzunsa kısalt
+                if p["status"] != DONE and splitter.utf16_len(p["name"]) > name_max + NAME_SUFFIX_RESERVE - 9:
+                    p["name"] = _part_file_name(title, len(job.parts), p["index"], p["start"], p["end"],
+                                                False, name_max)
         parts = job.parts
+        _salvage(d, old_parts, parts)
+        ctx.update(save=True, files=list_files(d))
         span = sum(((p["end"] if p["end"] is not None else (total or 0)) - p["start"]) for p in parts) or 1
         rate = _Rate()
         meter = hls.Meter()  # bu çalıştırmada internetten alınan toplam bayt
@@ -454,7 +490,7 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
             return sum(((p["end"] or 0) - p["start"]) for p in parts if p["status"] == DONE)
 
         for part in parts:
-            if part["status"] == DONE and Path(d, part["name"]).exists():
+            if part["status"] == DONE and _exists(Path(d, part["name"])):
                 continue
             ctx.check()
             p_len = (part["end"] if part["end"] is not None else (total or 0)) - part["start"]
@@ -482,13 +518,53 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
                                   on_progress=lambda k, n, b: progress(k / n))
             else:
                 _ytdlp_section(ctx, job.url, cookies_browser(), part, total, out, progress)
-                meter.add(Path(out).stat().st_size)
+                meter.add(_size(out))
             ctx.check()
-            part.update(status=DONE, percent=100.0, size=Path(out).stat().st_size)
+            part.update(status=DONE, percent=100.0, size=_size(out))
             ctx.update(save=True, files=list_files(d))
         ctx.update(files=list_files(d), part_index=0)
 
     return process
+
+
+def _salvage(d: Path, old_parts: list[dict], parts: list[dict]) -> None:
+    """Önceki denemede tamamen inmiş ama adı değiştirilemeyen (.part.mp4) parçaları kurtarır,
+    kalan yarım dosyaları siler."""
+    try:
+        leftovers = {n for n in os.listdir(long_path(d)) if n.endswith(".part.mp4")}
+    except OSError:
+        return
+    if not leftovers:
+        return
+    olds = {p["index"]: p for p in old_parts}
+    for p in parts:
+        if p["status"] == DONE:
+            continue
+        op = olds.get(p["index"])
+        if not op or op.get("start") != p["start"] or op.get("end") != p["end"]:
+            continue
+        tmp_name = op["name"] + ".part.mp4"
+        if tmp_name not in leftovers:
+            continue
+        tmp = long_path(d / tmp_name)
+        want = (p["end"] - p["start"]) if p["end"] is not None else None
+        try:
+            got = splitter.probe_duration(tmp)
+        except Exception:
+            got = 0
+        if got > 0 and (want is None or abs(got - want) <= max(10.0, want * 0.02)):
+            try:
+                os.replace(tmp, long_path(d / p["name"]))
+                p.update(status=DONE, percent=100.0, size=_size(d / p["name"]))
+                leftovers.discard(tmp_name)
+                log.info("Önceki denemeden kalan parça kurtarıldı: %s", p["name"])
+            except OSError:
+                log.exception("Parça kurtarılamadı")
+    for n in leftovers:  # yarım kalmış, kullanılamayan dosyalar
+        try:
+            os.remove(long_path(d / n))
+        except OSError:
+            pass
 
 
 def _ytdlp_section(ctx: JobContext, url: str, cookies: str, part: dict, total: float | None,

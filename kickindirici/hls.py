@@ -23,6 +23,7 @@ from typing import Callable
 from urllib.parse import urljoin
 
 from . import procs
+from .paths import long_path
 
 log = logging.getLogger(__name__)
 
@@ -258,7 +259,7 @@ def download_part(pl: Playlist, idxs: list[int], out_path: str, ffmpeg: str,
         t_err.join(timeout=5)
         if p.returncode != 0:
             raise RuntimeError("ffmpeg hatası: " + b"".join(err).decode("utf-8", "replace")[-400:])
-        os.replace(tmp, out_path)
+        os.replace(long_path(tmp), long_path(out_path))
         ok = True
     except _PipeClosed as e:
         if cancel.is_set():
@@ -272,7 +273,7 @@ def download_part(pl: Playlist, idxs: list[int], out_path: str, ffmpeg: str,
         if not ok:
             procs.kill_tree(p)
             try:
-                os.remove(tmp)
+                os.remove(long_path(tmp))
             except OSError:
                 pass
         procs.forget(p)
