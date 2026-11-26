@@ -146,6 +146,10 @@ class JobManager:
             snap = [Job(**asdict(j)) for j in self._jobs.values()]
         return sorted(snap, key=lambda j: j.created, reverse=True)
 
+    def busy(self) -> bool:
+        with self._lock:
+            return any(j.status == QUEUED or j.status in ACTIVE for j in self._jobs.values())
+
     def get(self, job_id: str) -> Job | None:
         with self._lock:
             return self._jobs.get(job_id)
@@ -364,26 +368,46 @@ def plan_parts(title: str, start: float, end: float | None, total: float | None,
 
 
 class _Rate:
-    """Hız ve kalan süre için kayan pencere."""
+    """Hız ve kalan süre.
 
-    def __init__(self, window: float = 6.0):
-        self.window = window
+    Örnekler gerçek ağ trafiğinden (indirilen toplam bayt) alınır ve hız her zaman
+    *şu ana kadar* geçen sabit bir pencereye bölünür; bekleme anları da hesaba girer.
+    Böylece sırayla yazma sırasında oluşan anlık patlamalar hızı şişirmez.
+    """
+
+    SPEED_WINDOW = 5.0
+    ETA_WINDOW = 30.0
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self.clock = clock
         self.samples: collections.deque = collections.deque()
 
-    def add(self, nbytes: float, video_sec: float) -> None:
-        now = time.time()
-        self.samples.append((now, nbytes, video_sec))
-        while len(self.samples) > 2 and now - self.samples[0][0] > self.window:
+    def add(self, total_bytes: float, video_sec: float) -> None:
+        now = self.clock()
+        self.samples.append((now, total_bytes, video_sec))
+        while self.samples and now - self.samples[0][0] > self.ETA_WINDOW * 2:
             self.samples.popleft()
+
+    def _ref(self, now: float, window: float):
+        ref = self.samples[0]
+        for s in self.samples:
+            if s[0] <= now - window:
+                ref = s
+            else:
+                break
+        return ref
 
     def rates(self) -> tuple[float | None, float | None]:
         if len(self.samples) < 2:
             return None, None
-        (t0, b0, v0), (t1, b1, v1) = self.samples[0], self.samples[-1]
-        dt = t1 - t0
-        if dt <= 0.2:
-            return None, None
-        return (b1 - b0) / dt, (v1 - v0) / dt
+        now = self.clock()
+        last = self.samples[-1]
+        t0, b0, _ = self._ref(now, self.SPEED_WINDOW)
+        t1, _, v1 = self._ref(now, self.ETA_WINDOW)
+        dt_speed, dt_eta = now - t0, now - t1
+        speed = (last[1] - b0) / dt_speed if dt_speed >= 1.0 else None
+        vrate = (last[2] - v1) / dt_eta if dt_eta >= 2.0 else None
+        return speed, vrate
 
 
 def default_processor(cookies_browser: Callable[[], str], prober: Prober | None = None) -> Processor:
@@ -424,6 +448,7 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
         parts = job.parts
         span = sum(((p["end"] if p["end"] is not None else (total or 0)) - p["start"]) for p in parts) or 1
         rate = _Rate()
+        meter = hls.Meter()  # bu çalıştırmada internetten alınan toplam bayt
 
         def done_seconds() -> float:
             return sum(((p["end"] or 0) - p["start"]) for p in parts if p["status"] == DONE)
@@ -438,11 +463,14 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
             ctx.update(save=True, part_index=part["index"])
             out = str(d / part["name"])
 
-            def progress(frac: float | None, nbytes: float) -> None:
+            net_base = meter.total
+
+            def progress(frac: float | None, part_net_bytes: float | None = None) -> None:
                 if frac is not None:
                     part["percent"] = round(frac * 100, 1)
                 vid = base_done + (frac or 0) * p_len
-                rate.add(nbytes + sum(p.get("size") or 0 for p in parts if p["status"] == DONE), vid)
+                net = meter.total if pl is not None else net_base + (part_net_bytes or 0)
+                rate.add(net, vid)
                 bps, vps = rate.rates()
                 eta = (span - vid) / vps if vps else None
                 ctx.update(percent=min(100.0, vid / span * 100), speed=bps, eta=eta)
@@ -450,10 +478,11 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
             if pl is not None:
                 idxs = hls.assign(pl, [part["start"], part["end"]])[0]
                 hls.download_part(pl, idxs, out, ffmpeg_path(), headers=src[1], cancel=ctx.cancel,
-                                  on_process=ctx.set_proc,
-                                  on_progress=lambda k, n, b: progress(k / n, b))
+                                  on_process=ctx.set_proc, meter=meter,
+                                  on_progress=lambda k, n, b: progress(k / n))
             else:
                 _ytdlp_section(ctx, job.url, cookies_browser(), part, total, out, progress)
+                meter.add(Path(out).stat().st_size)
             ctx.check()
             part.update(status=DONE, percent=100.0, size=Path(out).stat().st_size)
             ctx.update(save=True, files=list_files(d))

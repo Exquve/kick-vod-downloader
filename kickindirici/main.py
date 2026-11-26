@@ -10,8 +10,9 @@ import sys
 import threading
 import time
 import webbrowser
+from pathlib import Path
 
-from . import __version__, jobs, procs, tunnel as tunnelmod, winutil, ytdlp
+from . import __version__, jobs, procs, tunnel as tunnelmod, updater as updmod, winutil, ytdlp
 from .config import Config
 from .paths import appdata_dir, is_frozen, package_dir
 from .web import AppState, create_app
@@ -33,6 +34,18 @@ def setup_logging() -> None:
     root.addHandler(h)
     if not is_frozen():
         root.addHandler(logging.StreamHandler())
+
+
+def wait_port_free(port: int, timeout: float) -> None:
+    """Güncelleme sonrası: eski sürüm portu bırakana kadar bekle (QR adresi değişmesin)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("0.0.0.0", port))
+                return
+            except OSError:
+                time.sleep(0.5)
 
 
 def find_port(preferred: int) -> int:
@@ -84,6 +97,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     cfg = Config()
+    restart_flag = appdata_dir() / "restart.flag"
+    if restart_flag.exists():  # otomatik güncellemeden sonra açıldık
+        log.info("Güncelleme sonrası açılış (sürüm %s)", __version__)
+        restart_flag.unlink(missing_ok=True)
+        args.no_browser = True
+        wait_port_free(args.port or cfg["port"], 20)
+    exe = Path(sys.executable)
+    if is_frozen():
+        threading.Thread(target=updmod.cleanup_old, args=(exe,), daemon=True).start()
     ytdlp.start_background_prepare()
     winutil.ensure_firewall(cfg)
 
@@ -110,17 +132,44 @@ def main(argv: list[str] | None = None) -> int:
             logging.shutdown()
             os._exit(0)
 
-    state = AppState(cfg, manager, tun, port, on_quit=shutdown, prober=prober)
+    server_ref: list = []
+
+    def restart_into_new_version() -> None:
+        """Güncellenen exe'yi başlatıp kapanır. Sürmekte olan iş yokken çağrılır."""
+        log.info("Yeni sürümle yeniden başlatılıyor")
+        restart_flag.write_text(str(port), "utf-8")
+        try:
+            server_ref[0].close()
+        except Exception:
+            pass
+        inst.release()
+        try:
+            procs.launch_detached(str(exe))
+        except Exception:
+            log.exception("Yeni sürüm başlatılamadı")
+            restart_flag.unlink(missing_ok=True)
+        time.sleep(2)
+        shutdown()
+
+    upd = None
+    if is_frozen() and (not os.environ.get("KICK_TEST") or os.environ.get("KICK_UPDATE_API")):
+        upd = updmod.Updater(exe, enabled=lambda: bool(cfg["auto_update"]), busy=manager.busy,
+                             restart=restart_into_new_version)
+
+    state = AppState(cfg, manager, tun, port, on_quit=shutdown, prober=prober, updater=upd)
     app = create_app(state)
 
     from waitress import create_server
     server = create_server(app, host="0.0.0.0", port=port, threads=16,
                            channel_timeout=300, ident="KickIndirici")
+    server_ref.append(server)
     threading.Thread(target=server.run, name="waitress", daemon=True).start()
     winutil.write_instance(port)
     log.info("Sunucu: http://0.0.0.0:%s", port)
     if cfg["remote_enabled"]:
         tun.start(port)
+    if upd is not None:
+        upd.start()
     if is_frozen():
         threading.Thread(target=parent_watchdog, args=(shutdown,), daemon=True).start()
 

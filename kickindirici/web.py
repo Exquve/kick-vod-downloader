@@ -24,8 +24,10 @@ PROXY_HEADERS = ("Cf-Connecting-Ip", "Cf-Ray", "X-Forwarded-For", "Forwarded")
 class AppState:
     """Web katmanının ihtiyaç duyduğu her şey (testlerde kolayca taklit edilir)."""
 
-    def __init__(self, cfg, manager, tunnel=None, port: int = 8765, on_quit=None, prober=None):
+    def __init__(self, cfg, manager, tunnel=None, port: int = 8765, on_quit=None, prober=None,
+                 updater=None):
         self.cfg = cfg
+        self.updater = updater
         self.prober = prober
         self.manager = manager
         self.tunnel = tunnel
@@ -151,7 +153,30 @@ def create_app(state: AppState) -> Flask:
                     links(part)
             out.append(d)
         return jsonify(jobs=out, ytdlp_ready=ytdlp.is_ready(), ytdlp_error=ytdlp.ready_error(),
-                       version=__version__)
+                       version=__version__, update=update_info())
+
+    def update_info() -> dict:
+        if state.updater is None:
+            return {"status": "disabled", "current": __version__}
+        return state.updater.snapshot()
+
+    @app.post("/api/update/check")
+    def update_check():
+        if state.updater is None:
+            return jsonify(error="Otomatik güncelleme yalnızca exe sürümünde çalışır."), 400
+        state.updater.check_now()
+        return jsonify(ok=True)
+
+    @app.post("/api/update/apply")
+    def update_apply():
+        if state.updater is None:
+            return jsonify(error="Otomatik güncelleme yalnızca exe sürümünde çalışır."), 400
+        if state.updater.snapshot()["status"] != "ready":
+            return jsonify(error="Hazır bir güncelleme yok."), 400
+        if state.manager.busy():
+            return jsonify(error="Devam eden indirme var; bitince tekrar deneyin."), 409
+        threading.Thread(target=state.updater.apply, daemon=True).start()
+        return jsonify(ok=True)
 
     def valid_url(url: str) -> bool:
         return url.lower().startswith(("http://", "https://")) and len(url) < 2000
@@ -211,7 +236,7 @@ def create_app(state: AppState) -> Flask:
         c = state.cfg.snapshot()
         return jsonify(download_dir=c["download_dir"], cookies_browser=c["cookies_browser"],
                        default_chunk=c["default_chunk"], remote_enabled=c["remote_enabled"],
-                       local=is_local_request())
+                       auto_update=c["auto_update"], local=is_local_request())
 
     @app.post("/api/settings")
     def set_settings():

@@ -62,6 +62,9 @@ def setup_job_object() -> bool:
         ]
 
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+    # Yalnızca açıkça CREATE_BREAKAWAY_FROM_JOB isteyen süreç (güncelleme sonrası yeni sürüm)
+    # job dışına çıkabilir; yt-dlp/ffmpeg bunu istemez, onlar job içinde kalır.
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x0800
     JobObjectExtendedLimitInformation = 9
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateJobObjectW.restype = wintypes.HANDLE
@@ -75,7 +78,8 @@ def setup_job_object() -> bool:
         log.warning("CreateJobObject başarısız: %s", ctypes.get_last_error())
         return False
     info = EXTENDED()
-    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    info.BasicLimitInformation.LimitFlags = (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                                             | JOB_OBJECT_LIMIT_BREAKAWAY_OK)
     if not k32.SetInformationJobObject(job, JobObjectExtendedLimitInformation,
                                        ctypes.byref(info), ctypes.sizeof(info)):
         log.warning("SetInformationJobObject başarısız: %s", ctypes.get_last_error())
@@ -170,3 +174,20 @@ def kill_all() -> None:
 def active_count() -> int:
     with _lock:
         return sum(1 for p in _procs if p.poll() is None)
+
+
+def launch_detached(exe: str) -> None:
+    """Güncellenen exe'yi bizden bağımsız başlatır (bizim job'ımız kapanınca ölmesin)."""
+    if not IS_WINDOWS:
+        subprocess.Popen([exe], start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+        return
+    DETACHED_PROCESS, NEW_GROUP, BREAKAWAY = 0x00000008, 0x00000200, 0x01000000
+    try:
+        subprocess.Popen([exe], creationflags=DETACHED_PROCESS | NEW_GROUP | BREAKAWAY,
+                         cwd=os.path.dirname(exe), close_fds=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    except OSError as e:  # üst job breakaway'e izin vermiyorsa: Windows kabuğu başlatsın
+        log.warning("Breakaway başarısız (%s); explorer ile başlatılıyor", e)
+    subprocess.Popen(["explorer.exe", exe], close_fds=True)

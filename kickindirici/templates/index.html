@@ -90,6 +90,15 @@
       <label><input type="checkbox" id="remote"> Farklı ağlardan erişim (internet üzerinden)</label>
       <div class="hint">Açıkken Cloudflare üzerinden geçici, şifreli bir adres oluşturulur; modem ayarı gerekmez. Adres "Telefondan aç" sayfasında QR olarak görünür ve uygulama her açıldığında değişir. Linki bilen herkes erişemez; gizli erişim anahtarı gerekir.</div>
     </div>
+    <div class="field">
+      <label><input type="checkbox" id="autoUpdate"> Yeni sürüm çıkınca otomatik güncelle</label>
+      <div class="hint" id="updInfo">Sürüm {{version}}</div>
+      <div class="row" style="margin-top:8px">
+        <button type="button" id="updCheck">Güncellemeleri kontrol et</button>
+        <button type="button" id="updApply" class="primary" hidden>Şimdi güncelle</button>
+      </div>
+      <div class="hint">Güncelleme arka planda iner; devam eden indirme varsa o bitince uygulama kendini birkaç saniyede yeniden başlatır. Adres ve QR değişmez.</div>
+    </div>
     <button class="primary full" id="saveSettings" type="button">Kaydet</button>
     <div class="msg" id="setMsg"></div>
   </details>

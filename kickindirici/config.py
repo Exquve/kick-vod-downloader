@@ -21,6 +21,7 @@ def _defaults() -> dict[str, Any]:
         "cookies_browser": "",
         "port": 8765,
         "remote_enabled": False,
+        "auto_update": True,
         "token": secrets.token_urlsafe(18),
         "firewall_prompted": False,
         "firewall_declined": False,
@@ -105,6 +106,8 @@ class Config:
                 new["default_chunk"] = c
         if "remote_enabled" in data:
             new["remote_enabled"] = bool(data["remote_enabled"])
+        if "auto_update" in data:
+            new["auto_update"] = bool(data["auto_update"])
         if not errors and new:
             self.update(**new)
         return errors

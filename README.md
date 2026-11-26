@@ -22,6 +22,10 @@ Uygulama saatin yanındaki tepside durur: **Telefondan aç (QR)**, **İndirme kl
 
 Dosyalar `Videolar\KickVODs` içine iner (Ayarlar'dan değiştirilebilir).
 
+**Güncellemeler otomatik:** Yeni sürüm çıkınca uygulama arka planda indirir, doğrular ve
+devam eden indirme yoksa birkaç saniyede kendini yeniden başlatır (adres ve QR aynı kalır).
+Ayarlar'dan kapatılabilir. exe'yi yazılabilir bir klasörde (ör. Belgeler, Masaüstü) tutun.
+
 <details>
 <summary><b>Farklı ağdan (mobil veri vb.) kullanmak</b></summary>
 
@@ -71,6 +75,7 @@ HLS olmayan ya da doğrudan okunamayan kaynaklarda (ör. şifreli) yedek olarak
 | `kickindirici/web.py` | Flask arayüzü/API, HTTP Range destekli dosya servisi, erişim anahtarı |
 | `kickindirici/procs.py` | Alt süreç kaydı, `KILL_ON_JOB_CLOSE` Job Object |
 | `kickindirici/tunnel.py` | İsteğe bağlı Cloudflare Quick Tunnel |
+| `kickindirici/updater.py` | Son Release'i kontrol eder, exe'yi indirip SHA256 ile doğrular, iş yokken değiştirip yeniden başlatır |
 
 Veriler: ayarlar `%LOCALAPPDATA%\KickIndirici\config.json`, iş listesi `jobs.json`, log `log.txt`.
 Her iş indirme klasöründe `<başlık> [<id>]` alt klasöründedir.
@@ -96,6 +101,8 @@ pip install -r requirements-dev.txt
 python run.py --no-tray        # http://127.0.0.1:8765
 python -m pytest -q
 python scripts/exit_check.py python run.py --no-tray   # çıkış sonrası süreç kontrolü
+# Windows'ta, derlenmiş exe ile:
+python scripts/update_check.py dist/KickIndirici.exe    # otomatik güncelleme uçtan uca
 ```
 
 ### Sürüm yayınlama

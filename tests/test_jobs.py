@@ -1,3 +1,4 @@
+import pytest
 import threading
 import time
 from pathlib import Path
@@ -193,3 +194,52 @@ def test_hls_source():
                             "http_headers": {"User-Agent": "x"}}) == ("https://a/i.m3u8", {"User-Agent": "x"})
     assert jobs.hls_source({"url": "https://a/v.mp4", "protocol": "https"}) is None
     assert jobs.hls_source({"requested_formats": [{}, {}], "url": "x", "protocol": "m3u8"}) is None
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_rate_steady():
+    c = FakeClock()
+    r = jobs._Rate(clock=c)
+    total = 0
+    for _ in range(40):  # 10 MB/sn, 4 sn video/sn
+        c.t += 0.5
+        total += 5_000_000
+        r.add(total, total / 2_500_000)
+    speed, vrate = r.rates()
+    assert speed == pytest.approx(10_000_000, rel=0.05)
+    assert vrate == pytest.approx(4, rel=0.05)
+
+
+def test_rate_burst_after_stall_is_not_inflated():
+    """Sıralı yazmada biriken segmentler bir anda yazılınca hız şişmemeli."""
+    c = FakeClock()
+    r = jobs._Rate(clock=c)
+    total = 0
+    for _ in range(20):  # 15 MB/sn (120 Mbps) sabit
+        c.t += 0.5
+        total += 7_500_000
+        r.add(total, 0)
+    for _ in range(6):  # 3 sn takılma: ağdan veri gelmiyor ama tick devam ediyor
+        c.t += 0.5
+        r.add(total, 0)
+    c.t += 0.2  # sonra 45 MB'lık birikmiş veri bir anda
+    total += 45_000_000
+    r.add(total, 0)
+    speed, _ = r.rates()
+    assert speed <= 15_000_000 * 1.05, speed
+
+
+def test_rate_needs_a_second_of_data():
+    c = FakeClock()
+    r = jobs._Rate(clock=c)
+    r.add(0, 0)
+    c.t += 0.3
+    r.add(50_000_000, 1)
+    assert r.rates()[0] is None

@@ -91,3 +91,14 @@ def test_http_error_propagates(http_root, tmp_path):
     with pytest.raises(Exception) as e:
         hls.download_part(pl, [0], str(tmp_path / "y.mp4"), ffmpeg_path())
     assert "404" in str(e.value)
+
+
+def test_meter_counts_network_bytes(hls_dir, http_root, tmp_path):
+    root, base, _ = http_root
+    shutil.copytree(hls_dir, root, dirs_exist_ok=True)
+    pl = hls.load_playlist(f"{base}/v/index.m3u8")
+    idxs = list(range(10))
+    meter = hls.Meter()
+    hls.download_part(pl, idxs, str(tmp_path / "m.mp4"), ffmpeg_path(), meter=meter)
+    expected = sum((root / "v" / f"seg{i:03d}.ts").stat().st_size for i in idxs)
+    assert meter.total == expected

@@ -232,3 +232,18 @@ def test_done_parts_get_links(env):
     parts = next(x for x in s["jobs"] if x["id"] == j["id"])["parts"]
     assert parts[0]["download"].endswith("?dl=1") and parts[0]["infuse"].startswith("infuse://")
     assert "download" not in parts[1]
+
+
+def test_settings_auto_update_default_and_toggle(env):
+    app, cfg, _ = env
+    c = app.test_client()
+    assert c.get("/api/settings").json["auto_update"] is True
+    assert c.post("/api/settings", json={"auto_update": False}).status_code == 200
+    assert cfg["auto_update"] is False
+
+
+def test_update_endpoints_without_updater(env):
+    app, *_ = env
+    c = app.test_client()
+    assert c.get("/api/state").json["update"]["status"] == "disabled"
+    assert c.post("/api/update/check").status_code == 400

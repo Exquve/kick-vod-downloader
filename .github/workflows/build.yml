@@ -47,6 +47,12 @@ jobs:
           .venv\Scripts\python.exe scripts\exit_check.py dist\KickIndirici.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Otomatik güncelleme kontrolü (exe)
+        shell: pwsh
+        run: |
+          .venv\Scripts\python.exe scripts\update_check.py dist\KickIndirici.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: SHA256
         shell: pwsh
         run: |

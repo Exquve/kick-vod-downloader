@@ -33,12 +33,21 @@ class SingleInstance:
             self._handle = k32.CreateMutexW(None, False, "Local\\" + self.name)
             return ctypes.get_last_error() != 183  # ERROR_ALREADY_EXISTS
         import fcntl
-        self._fh = open(appdata_dir() / "instance.lock", "w")
+        self._fh = open(appdata_dir() / "instance.lock", "w")  # noqa: SIM115
         try:
             fcntl.flock(self._fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return True
         except OSError:
             return False
+
+    def release(self) -> None:
+        if IS_WINDOWS and self._handle:
+            import ctypes
+            ctypes.windll.kernel32.CloseHandle(self._handle)
+            self._handle = None
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
 
 
 def instance_file():

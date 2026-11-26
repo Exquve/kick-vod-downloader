@@ -27,6 +27,18 @@ from . import procs
 log = logging.getLogger(__name__)
 
 
+class Meter:
+    """İnternetten gerçekten alınan bayt sayısı (iş parçacığı güvenli)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.total = 0
+
+    def add(self, n: int) -> None:
+        with self._lock:
+            self.total += n
+
+
 class _PipeClosed(Exception):
     pass
 
@@ -117,7 +129,7 @@ def parse_media(text: str, base: str) -> Playlist:
 
 
 def fetch(url: str, headers: dict | None = None, timeout: float = 30, retries: int = 6,
-          cancel: threading.Event | None = None) -> bytes:
+          cancel: threading.Event | None = None, meter: Meter | None = None) -> bytes:
     last: Exception | None = None
     for attempt in range(retries):
         if cancel is not None and cancel.is_set():
@@ -125,7 +137,17 @@ def fetch(url: str, headers: dict | None = None, timeout: float = 30, retries: i
         try:
             req = urllib.request.Request(url, headers=headers or {})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read()
+                chunks = []
+                while True:
+                    if cancel is not None and cancel.is_set():
+                        raise InterruptedError("iptal")
+                    c = r.read(65536)
+                    if not c:
+                        break
+                    chunks.append(c)
+                    if meter is not None:
+                        meter.add(len(c))
+                return b"".join(chunks)
         except urllib.error.HTTPError as e:
             last = e
             if e.code in (401, 403, 404, 410):
@@ -168,8 +190,13 @@ def download_part(pl: Playlist, idxs: list[int], out_path: str, ffmpeg: str,
                   headers: dict | None = None, workers: int = 8,
                   cancel: threading.Event | None = None,
                   on_progress: Callable[[int, int, int], None] | None = None,
-                  on_process: Callable[[subprocess.Popen | None], None] | None = None) -> None:
-    """idxs segmentlerini indirip out_path'e mp4 olarak yazar."""
+                  on_process: Callable[[subprocess.Popen | None], None] | None = None,
+                  meter: Meter | None = None) -> None:
+    """idxs segmentlerini indirip out_path'e mp4 olarak yazar.
+
+    on_progress(yazılan_segment, toplam_segment, yazılan_bayt) yazma sırasında ve
+    beklerken yarım saniyede bir çağrılır (hız göstergesi bekleme anlarında da güncel kalsın).
+    """
     cancel = cancel or threading.Event()
     tmp = out_path + ".part.mp4"
     in_fmt = [] if pl.init_uri else ["-f", "mpegts"]
@@ -193,14 +220,14 @@ def download_part(pl: Playlist, idxs: list[int], out_path: str, ffmpeg: str,
 
     try:
         if pl.init_uri:
-            write(fetch(pl.init_uri, headers, cancel=cancel))
+            write(fetch(pl.init_uri, headers, cancel=cancel, meter=meter))
         queue: collections.deque = collections.deque()
         it = iter(idxs)
 
         def submit_next() -> None:
             i = next(it, None)
             if i is not None:
-                queue.append(ex.submit(fetch, pl.segments[i].uri, headers, 30, 6, cancel))
+                queue.append(ex.submit(fetch, pl.segments[i].uri, headers, 30, 6, cancel, meter))
 
         for _ in range(workers * 2):
             submit_next()
@@ -214,6 +241,8 @@ def download_part(pl: Playlist, idxs: list[int], out_path: str, ffmpeg: str,
                     data = fut.result(timeout=0.5)
                     break
                 except TimeoutError:
+                    if on_progress:
+                        on_progress(done, len(idxs), nbytes)
                     continue
             write(data)
             done += 1

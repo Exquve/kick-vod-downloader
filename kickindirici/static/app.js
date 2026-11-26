@@ -75,7 +75,7 @@ function jobHtml(j) {
     if (j.status !== "queued") stats.unshift(`%${pct.toFixed(1)}`);
     if (j.part_index && parts.length > 1) stats.push(`Parça ${j.part_index}/${parts.length}`);
     if (j.status === "downloading") {
-      if (j.speed) stats.push(fmtBytes(j.speed) + "/sn");
+      if (j.speed) stats.push(`${(j.speed / 1e6).toFixed(1)} MB/sn · ${Math.round(j.speed * 8 / 1e6)} Mbps`);
       if (j.eta != null) stats.push("Kalan: " + fmtTime(j.eta));
     }
     stats.push(j.chunk ? j.chunk + " dk parçalar" : "Bölme yok");
@@ -106,8 +106,14 @@ async function refresh() {
       lastJson = json;
       $("#jobs").innerHTML = s.jobs.length ? s.jobs.map(jobHtml).join("") : `<div class="card empty">Henüz iş yok. Bir Kick VOD linki yapıştırın.</div>`;
     }
-    $("#notice").innerHTML = !s.ytdlp_ready
-      ? `<div class="card warn">${s.ytdlp_error ? "yt-dlp indirilemedi: " + esc(s.ytdlp_error) : "İlk açılış: yt-dlp hazırlanıyor…"}</div>` : "";
+    const notes = [];
+    if (!s.ytdlp_ready) notes.push(s.ytdlp_error ? "yt-dlp indirilemedi: " + esc(s.ytdlp_error) : "İlk açılış: yt-dlp hazırlanıyor…");
+    const u = s.update || {};
+    if (u.status === "downloading") notes.push(`Yeni sürüm v${esc(u.latest)} indiriliyor${u.progress != null ? " %" + Math.round(u.progress) : ""}…`);
+    if (u.status === "ready") notes.push(`Yeni sürüm v${esc(u.latest)} hazır. İndirmeler bitince uygulama kendini yeniden başlatacak.`);
+    if (u.status === "applying") notes.push(`v${esc(u.latest)} sürümüne geçiliyor, sayfa birkaç saniye içinde kendine gelecek…`);
+    $("#notice").innerHTML = notes.map((n) => `<div class="card warn">${n}</div>`).join("");
+    showUpdate(u);
   } catch (e) {
     $("#notice").innerHTML = `<div class="card warn">PC'ye ulaşılamıyor: ${esc(e.message)}. Uygulama açık mı?</div>`;
   }
@@ -255,17 +261,38 @@ $("#startBtn").addEventListener("click", async () => {
   } catch (err) { msg.className = "msg err"; msg.textContent = err.message; }
 });
 
+const UPD = { checking: "Kontrol ediliyor…", uptodate: "Güncel", downloading: "İndiriliyor", ready: "Kurulmaya hazır",
+  applying: "Kuruluyor", error: "Hata", idle: "", disabled: "Geliştirme sürümü (otomatik güncelleme kapalı)" };
+function showUpdate(u) {
+  if (!u || !$("#updInfo")) return;
+  let t = `Sürüm ${esc(u.current || "")}`;
+  if (u.latest && u.latest !== u.current) t += ` · en son: v${esc(u.latest)}`;
+  if (UPD[u.status]) t += ` · ${UPD[u.status]}`;
+  if (u.status === "downloading" && u.progress != null) t += ` %${Math.round(u.progress)}`;
+  if (u.status === "error" && u.error) t += `: ${esc(u.error)}`;
+  $("#updInfo").innerHTML = t;
+  $("#updApply").hidden = u.status !== "ready";
+}
+$("#updCheck").addEventListener("click", async () => {
+  try { await api("/api/update/check", { method: "POST" }); refresh(); } catch (e) { alert(e.message); }
+});
+$("#updApply").addEventListener("click", async () => {
+  try { await api("/api/update/apply", { method: "POST" }); refresh(); } catch (e) { alert(e.message); }
+});
+
 async function loadSettings() {
   const s = await api("/api/settings");
   $("#dir").value = s.download_dir; $("#cookies").value = s.cookies_browser;
   $("#defChunk").value = s.default_chunk; $("#remote").checked = s.remote_enabled;
+  $("#autoUpdate").checked = s.auto_update;
 }
 $("#saveSettings").addEventListener("click", async () => {
   const msg = $("#setMsg"); msg.className = "msg";
   try {
     await api("/api/settings", { method: "POST", body: JSON.stringify({
       download_dir: $("#dir").value, cookies_browser: $("#cookies").value,
-      default_chunk: +$("#defChunk").value, remote_enabled: $("#remote").checked }) });
+      default_chunk: +$("#defChunk").value, remote_enabled: $("#remote").checked,
+      auto_update: $("#autoUpdate").checked }) });
     msg.textContent = "Kaydedildi.";
   } catch (e) {
     msg.className = "msg err";
