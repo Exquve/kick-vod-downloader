@@ -142,3 +142,27 @@ def test_pause_mid_part_and_resume(manager, hls_dir, http_root):
     assert splitter.probe_duration(Path(job.dir) / job.parts[0]["name"]) == pytest.approx(200, abs=1)
     assert sorted(p.name for p in Path(job.dir).iterdir()) == [job.parts[0]["name"]]
     assert before
+
+
+def test_deleted_part_is_not_downloaded_again(manager, hls_dir, http_root):
+    root, base, hits = http_root
+    shutil.copytree(hls_dir, root, dirs_exist_ok=True)
+    seg = root / "v" / "seg020.ts"  # 2. parçayı bozarak işi yarıda bırak
+    good = seg.read_bytes()
+    seg.unlink()
+    j = manager.add(f"{base}/v/index.m3u8", 1, start=0, end=130)
+    job = run_job(manager, j.id)
+    assert job.status == jobs.ERROR and job.parts[0]["status"] == "done"
+    assert manager.delete_part(j.id, 1) == ""
+    assert not (Path(job.dir) / job.parts[0]["name"]).exists()
+    seg.write_bytes(good)
+    hits.clear()
+    assert manager.retry(j.id)
+    job = run_job(manager, j.id)
+    assert job.status == jobs.DONE, job.error
+    assert [p["status"] for p in job.parts] == ["deleted", "done"]
+    assert not {f"/v/seg{i:03d}.ts" for i in range(15)} & set(hits), "silinen parça tekrar inmemeli"
+    assert [f["name"] for f in job.files] == [job.parts[1]["name"]]
+    # program yeniden açılınca da silindi olarak kalmalı
+    m2 = jobs.JobManager(manager.store, manager.download_dir, lambda ctx: None)
+    assert m2.get(j.id).parts[0]["status"] == "deleted"

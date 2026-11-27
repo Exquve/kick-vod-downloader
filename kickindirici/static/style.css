@@ -86,3 +86,5 @@ a{color:var(--accent)}
 .badge.paused{background:#22303f;color:#8cc4ff}
 .part .ps.queued{color:var(--muted)}
 .part .mini.queued i{background:#8cc4ff}
+.part .acts .del{flex:none;width:48px;padding:0;font-size:18px}
+.part .ps.deleted{color:var(--muted);text-decoration:line-through}

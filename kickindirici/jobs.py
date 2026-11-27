@@ -21,6 +21,8 @@ log = logging.getLogger(__name__)
 
 QUEUED, PREPARING, DOWNLOADING, MERGING, SPLITTING = "queued", "preparing", "downloading", "merging", "splitting"
 DONE, ERROR, CANCELED, PAUSED = "done", "error", "canceled", "paused"
+DELETED = "deleted"  # parça indirildi ama kullanıcı sildi: tekrar indirilmez
+KEEP = {DONE, DELETED}  # yeniden indirilmeyecek parça durumları
 ACTIVE = {PREPARING, DOWNLOADING, MERGING, SPLITTING}
 FINISHED = {DONE, ERROR, CANCELED, PAUSED}  # çalışmayan durumlar
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v", ".flv"}
@@ -117,7 +119,7 @@ class JobManager:
                 job.status = PAUSED  # program kapanmıştı; "Devam et" kaldığı yerden sürdürür
                 job.error = ""
             for part in job.parts:
-                if part.get("status") != DONE:
+                if part.get("status") not in KEEP:
                     part["status"] = QUEUED  # yüzde korunur: kaldığı yeri gösterir
             job.files = [f for f in job.files if Path(job.dir, f["name"]).exists()]
             self._jobs[job.id] = job
@@ -200,7 +202,7 @@ class JobManager:
             job.status, job.error = QUEUED, ""
             job.speed = job.eta = None
             for part in job.parts:
-                if part.get("status") != DONE:
+                if part.get("status") not in KEEP:
                     part["status"] = QUEUED
             job.created = time.time()
             self._save()
@@ -225,6 +227,27 @@ class JobManager:
             self._jobs.pop(job_id, None)
             self._save()
         return True
+
+    def delete_part(self, job_id: str, index: int) -> str:
+        """İnmiş bir parçanın dosyasını siler. Hata varsa açıklaması, yoksa "" döner."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            part = next((p for p in job.parts if p.get("index") == index), None) if job else None
+            if not part:
+                return "Parça bulunamadı."
+            if part.get("status") != DONE:
+                return "Yalnızca inmiş parçalar silinebilir."
+            try:
+                os.remove(long_path(Path(job.dir) / part["name"]))
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return ("Dosya şu an kullanımda (oynatılıyor ya da indiriliyor olabilir). "
+                        "Kapatıp tekrar deneyin.")
+            part.update(status=DELETED, size=None)
+            job.files = [f for f in job.files if f["name"] != part["name"]]
+            self._save()
+            return ""
 
     def file_path(self, job_id: str, name: str) -> Path | None:
         job = self.get(job_id)
@@ -488,13 +511,14 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
 
         name_max = name_budget(d)
         old_parts = [dict(p) for p in job.parts]
-        if not any(p["status"] == DONE and _exists(Path(d, p["name"])) for p in job.parts):
+        if not any(p["status"] == DELETED or (p["status"] == DONE and _exists(Path(d, p["name"])))
+                   for p in job.parts):
             # Hiç biten parça yok: adları güncel kurallarla yeniden planla
             ctx.update(save=True, parts=plan_parts(title, job.start, job.end, total, job.chunk, pl,
                                                     name_max))
         else:
             for p in job.parts:  # biten parçalar korunur; kalanların adı çok uzunsa kısalt
-                if p["status"] != DONE and splitter.utf16_len(p["name"]) > name_max + NAME_SUFFIX_RESERVE - 9:
+                if p["status"] not in KEEP and splitter.utf16_len(p["name"]) > name_max + NAME_SUFFIX_RESERVE - 9:
                     p["name"] = _part_file_name(title, len(job.parts), p["index"], p["start"], p["end"],
                                                 False, name_max)
         parts = job.parts
@@ -506,10 +530,10 @@ def default_processor(cookies_browser: Callable[[], str], prober: Prober | None 
         meter = hls.Meter()  # bu çalıştırmada internetten alınan toplam bayt
 
         def done_seconds() -> float:
-            return sum(((p["end"] or 0) - p["start"]) for p in parts if p["status"] == DONE)
+            return sum(((p["end"] or 0) - p["start"]) for p in parts if p["status"] in KEEP)
 
         for part in parts:
-            if part["status"] == DONE and _exists(Path(d, part["name"])):
+            if part["status"] == DELETED or (part["status"] == DONE and _exists(Path(d, part["name"]))):
                 continue
             ctx.check()
             p_len = (part["end"] if part["end"] is not None else (total or 0)) - part["start"]
@@ -552,7 +576,7 @@ def _remove_orphans(d: Path, parts: list[dict]) -> None:
     """Artık hiçbir parçaya ait olmayan ara dosyaları (.part.ts/.part.json) siler."""
     keep = set()
     for p in parts:
-        if p["status"] != DONE:
+        if p["status"] not in KEEP:
             keep.update(Path(x).name for x in hls.part_files(str(d / p["name"]))[:2])
     try:
         names = os.listdir(long_path(d))
@@ -577,7 +601,7 @@ def _salvage(d: Path, old_parts: list[dict], parts: list[dict]) -> None:
         return
     olds = {p["index"]: p for p in old_parts}
     for p in parts:
-        if p["status"] == DONE:
+        if p["status"] in KEEP:
             continue
         op = olds.get(p["index"])
         if not op or op.get("start") != p["start"] or op.get("end") != p["end"]:

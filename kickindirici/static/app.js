@@ -45,21 +45,23 @@ async function api(path, opts = {}) {
   return data;
 }
 
-function fileActs(f) {
+function fileActs(f, partIndex) {
+  const del = partIndex != null
+    ? `<button class="del" data-act="delpart" data-idx="${partIndex}" title="Bu parçayı sil" aria-label="Parçayı sil">🗑</button>` : "";
   return `<div class="acts"><a class="btn primary" href="${esc(f.download)}" download>İndir</a>
-    <a class="btn" href="${esc(f.infuse)}">Infuse</a></div>`;
+    <a class="btn" href="${esc(f.play)}">▶ Oynat</a>${del}</div>`;
 }
 function partHtml(p, n) {
   const label = n > 1 ? `Parça ${String(p.index).padStart(2, "0")}` : "Video";
   const rng = p.end != null ? `${hms(p.start)} – ${hms(p.end)}` : "";
-  let st = { queued: "Sırada", downloading: `İniyor %${(p.percent || 0).toFixed(0)}`, done: "Hazır" }[p.status] || p.status;
+  let st = { queued: "Sırada", downloading: `İniyor %${(p.percent || 0).toFixed(0)}`, done: "Hazır", deleted: "Silindi" }[p.status] || p.status;
   if (p.status === "downloading" && p.finalizing) st = "Kaydediliyor…";
   if (p.status === "queued" && p.percent > 0) st = `Yarım · %${Math.floor(p.percent)}`;
   if (p.status === "done" && p.size) st = "Hazır · " + fmtBytes(p.size);
   let h = `<div class="part"><div class="ph"><div><span class="pn">${label}</span> <span class="pt">${rng}</span></div>
     <span class="ps ${p.status}">${esc(st)}</span></div>`;
   if (p.status === "downloading" || (p.status === "queued" && p.percent > 0)) h += `<div class="mini ${p.status}"><i style="width:${p.percent || 0}%"></i></div>`;
-  if (p.status === "done" && p.download) h += fileActs(p);
+  if (p.status === "done" && p.download) h += fileActs(p, p.index);
   return h + `</div>`;
 }
 function jobHtml(j) {
@@ -127,6 +129,15 @@ $("#jobs").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-act]");
   if (!b) return;
   const id = b.closest(".job").dataset.id, act = b.dataset.act;
+  if (act === "delpart") {
+    const label = "Parça " + String(b.dataset.idx).padStart(2, "0");
+    if (!confirm(`${label} silinsin mi? Dosya bilgisayardan da silinir.`)) return;
+    b.disabled = true;
+    try { await api(`/api/jobs/${id}/parts/${b.dataset.idx}`, { method: "DELETE" }); }
+    catch (e) { alert(e.message); }
+    lastJson = ""; refresh();
+    return;
+  }
   if (act === "delete" && !confirm("İş ve indirilen dosyaları silinsin mi?")) return;
   if (act === "cancel" && !confirm("İndirme iptal edilsin mi?")) return;
   // Durdur onay istemez: hiçbir şey kaybolmaz, "Devam et" kaldığı yerden sürdürür

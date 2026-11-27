@@ -99,7 +99,7 @@ def test_add_job_validation(env):
     assert c.post("/api/jobs", json={"url": "https://kick.com/x", "chunk": 45}).status_code == 400
 
 
-def test_file_links_and_infuse(env):
+def test_file_links_and_player(env):
     app, cfg, _ = env
     c = app.test_client()
     j = add_and_wait(c)
@@ -108,7 +108,17 @@ def test_file_links_and_infuse(env):
     assert f["size"] == len(DATA)
     assert f["download"].endswith("?dl=1")
     assert f["url"].startswith("http://localhost/f/") and ("k=" + cfg["token"]) in f["url"]
-    assert f["infuse"].startswith("infuse://x-callback-url/play?url=http%3A%2F%2Flocalhost%2Ff%2F")
+    assert f["play"] == f"/izle/{j['id']}/Yay%C4%B1n%20-%20Par%C3%A7a%2001.mp4"
+    assert "infuse" not in f
+    page = c.get(f["play"])
+    assert page.status_code == 200
+    html = page.get_data(as_text=True)
+    assert "<video" in html and f'src="/f/{j["id"]}/Yay%C4%B1n%20-%20Par%C3%A7a%2001.mp4"' in html
+    assert c.get(f"/izle/{j['id']}/yok.mp4").status_code == 404
+    # tarayıcı oynatırken inline ve Range ile ister
+    r = c.get(f"/f/{j['id']}/Yay%C4%B1n%20-%20Par%C3%A7a%2001.mp4", headers={"Range": "bytes=0-1"})
+    assert r.status_code == 206 and r.headers["Content-Type"] == "video/mp4"
+    assert not r.headers.get("Content-Disposition", "").startswith("attachment")
 
 
 def test_attachment_download(env):
@@ -230,7 +240,7 @@ def test_done_parts_get_links(env):
                                    "name": "Yayın - Parça 02.mp4", "size": None}]
     s = c.get("/api/state").json
     parts = next(x for x in s["jobs"] if x["id"] == j["id"])["parts"]
-    assert parts[0]["download"].endswith("?dl=1") and parts[0]["infuse"].startswith("infuse://")
+    assert parts[0]["download"].endswith("?dl=1") and parts[0]["play"].startswith("/izle/")
     assert "download" not in parts[1]
 
 
@@ -247,3 +257,24 @@ def test_update_endpoints_without_updater(env):
     c = app.test_client()
     assert c.get("/api/state").json["update"]["status"] == "disabled"
     assert c.post("/api/update/check").status_code == 400
+
+
+def test_delete_part_api(env):
+    app, _, m = env
+    c = app.test_client()
+    j = add_and_wait(c)
+    job = m.get(j["id"])
+    name = "Yayın - Parça 01.mp4"
+    with m._lock:
+        m._jobs[j["id"]].parts = [{"index": 1, "start": 0, "end": 10, "status": "done", "name": name, "size": 1},
+                                  {"index": 2, "start": 10, "end": 20, "status": "queued", "name": "b.mp4", "size": None}]
+    assert (Path(job.dir) / name).exists()
+    assert c.delete(f"/api/jobs/{j['id']}/parts/2").status_code == 409  # inmemiş parça
+    r = c.delete(f"/api/jobs/{j['id']}/parts/1")
+    assert r.status_code == 200, r.json
+    assert not (Path(job.dir) / name).exists()
+    st = next(x for x in c.get("/api/state").json["jobs"] if x["id"] == j["id"])
+    assert st["parts"][0]["status"] == "deleted" and "download" not in st["parts"][0]
+    assert st["files"] == []
+    assert c.get(f"/f/{j['id']}/Yay%C4%B1n%20-%20Par%C3%A7a%2001.mp4").status_code == 404
+    assert c.delete(f"/api/jobs/{j['id']}/parts/9").status_code == 409

@@ -144,7 +144,7 @@ def create_app(state: AppState) -> Flask:
                 full = f"{base}{path}?k={k}"
                 f["download"] = f"{path}?dl=1"
                 f["url"] = full
-                f["infuse"] = "infuse://x-callback-url/play?url=" + quote(full, safe="")
+                f["play"] = f"/izle/{j.id}/{quote(f['name'])}"
 
             for f in d["files"]:
                 links(f)
@@ -220,6 +220,23 @@ def create_app(state: AppState) -> Flask:
     @app.post("/api/jobs/<job_id>/cancel")
     def cancel_job(job_id):
         return jsonify(ok=state.manager.cancel(job_id))
+
+    @app.delete("/api/jobs/<job_id>/parts/<int:index>")
+    def delete_part(job_id, index):
+        if not state.manager.get(job_id):
+            abort(404)
+        err = state.manager.delete_part(job_id, index)
+        return (jsonify(error=err), 409) if err else jsonify(ok=True)
+
+    @app.get("/izle/<job_id>/<path:name>")
+    def watch(job_id, name):
+        p = state.manager.file_path(job_id, name)
+        if p is None:
+            abort(404)
+        job = state.manager.get(job_id)
+        src = f"/f/{job_id}/{quote(name)}"
+        return render_template("izle.html", name=name, title=job.title if job else name,
+                               src=src, download=src + "?dl=1")
 
     @app.post("/api/jobs/<job_id>/pause")
     def pause_job(job_id):

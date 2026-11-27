@@ -2,7 +2,8 @@
 
 Windows PC'nizde çalışır, telefondan kullanılır. Kick VOD linkini telefondan yapıştırırsınız,
 hangi aralığı istediğinizi ve parça süresini seçersiniz. PC **yalnızca o aralığı, parça parça**
-indirir; her parça biter bitmez telefona **İndir** ve **Infuse** butonları gelir. Tüm VOD'un
+indirir; her parça biter bitmez telefona **İndir** ve **▶ Oynat** butonları gelir (Oynat, videoyu
+tarayıcıda hemen açar; ileri sarılabilir). Tüm VOD'un
 inmesini beklemezsiniz.
 
 ## Kullanım
@@ -17,6 +18,7 @@ Telefonda: linki yapıştırın → başlık ve süre gelir → aralığı (ör.
 ve parça süresini seçin → **İndirmeyi başlat**. İlk parça hazır olunca izlemeye başlayabilirsiniz.
 İstediğiniz an **⏸ Durdur** deyip sonra **▶ Devam et** diyebilirsiniz; parçanın ortasından,
 kaldığı yerden sürer. İnternet kesilse ya da bilgisayar kapansa bile inen kısım kaybolmaz.
+İzlediğiniz parçayı 🗑 ile silebilirsiniz; silinen parça tekrar indirilmez.
 
 Uygulama saatin yanındaki tepside durur: **Telefondan aç (QR)**, **İndirme klasörünü aç**,
 **Çıkış**. Çıkış'a basınca hiçbir şey arka planda çalışmaya devam etmez.
